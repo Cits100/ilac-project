@@ -43,12 +43,25 @@ public class WorkOrderService {
     }
 
     /**
-     * Scrape all work orders (both Team and My work orders)
+     * Get raw HTML of a page for debugging
+     */
+    public String getRawHtml(String path, String identity) throws IOException {
+        String url = path.startsWith("http") ? path : baseUrl + path;
+        Document doc = getPage(url, identity);
+        return doc.html();
+    }
+
+    /**
+     * Scrape all work orders (Team, My work orders, and New/pending orders)
      */
     public Map<String, List<WorkOrder>> getAllWorkOrders(String identity) {
         try {
             Document doc = getPage(baseUrl, identity);
             Map<String, List<WorkOrder>> result = new HashMap<>();
+
+            // Parse New/Pending work orders (pending-accordion) - "Nuevas ordenes de trabajo"
+            List<WorkOrder> newOrders = parsePendingWorkOrders(doc);
+            result.put("newWorkOrders", newOrders);
 
             // Parse Team work orders (team-accordion)
             List<WorkOrder> teamOrders = parseWorkOrderSection(doc, "#team-accordion");
@@ -61,7 +74,215 @@ public class WorkOrderService {
             return result;
         } catch (Exception e) {
             e.printStackTrace();
-            return Map.of("teamWorkOrders", Collections.emptyList(), "myWorkOrders", Collections.emptyList());
+            return Map.of(
+                "newWorkOrders", Collections.emptyList(),
+                "teamWorkOrders", Collections.emptyList(),
+                "myWorkOrders", Collections.emptyList()
+            );
+        }
+    }
+
+    /**
+     * Parse pending/new work orders from pending-accordion
+     * These have different structure with Accept/Reject buttons
+     */
+    private List<WorkOrder> parsePendingWorkOrders(Document doc) {
+        List<WorkOrder> workOrders = new ArrayList<>();
+
+        Element section = doc.selectFirst("#pending-accordion");
+        if (section == null) {
+            return workOrders;
+        }
+
+        // Find all work order panels
+        Elements panels = section.select("> .panel.panel-default");
+        for (Element panel : panels) {
+            WorkOrder wo = parsePendingWorkOrderPanel(panel);
+            if (wo != null) {
+                workOrders.add(wo);
+            }
+        }
+
+        return workOrders;
+    }
+
+    /**
+     * Parse a pending work order panel (different structure from regular work orders)
+     */
+    private WorkOrder parsePendingWorkOrderPanel(Element panel) {
+        try {
+            Element heading = panel.selectFirst(".panel-heading");
+            if (heading == null) return null;
+
+            // Extract work order tag
+            Element tagEl = heading.selectFirst(".work-order-tag");
+            String tag = tagEl != null ? tagEl.text().trim() : "";
+            String id = tag.replace("#", "");
+
+            if (tag.isEmpty() || id.isEmpty()) {
+                return null;
+            }
+
+            // Extract title
+            Element titleEl = heading.selectFirst(".work-order-title");
+            String title = titleEl != null ? titleEl.text().trim() : "";
+
+            // Extract due date
+            String dueDate = "";
+            String duration = "";
+            Elements dateSpans = heading.select(".text-success");
+            for (Element span : dateSpans) {
+                String text = span.text();
+                if (text.contains("vencimiento:")) {
+                    Element strong = span.selectFirst("strong");
+                    dueDate = strong != null ? strong.text().trim() : "";
+                }
+                if (text.contains("Duración total:")) {
+                    Element strong = span.selectFirst("strong");
+                    duration = strong != null ? strong.text().trim() : "";
+                }
+            }
+
+            // Extract task count
+            String taskCount = "";
+            Element badge = heading.selectFirst(".label-info");
+            if (badge != null) {
+                taskCount = badge.text().replace("Tasks:", "").trim();
+            }
+
+            // Extract accept/reject tag URLs
+            String acceptTagUrl = "";
+            String rejectTagUrl = "";
+            Element acceptLink = heading.selectFirst("a.accept[href*=accept-tag]");
+            Element rejectLink = heading.selectFirst("a.reject[href*=reject-tag]");
+            if (acceptLink != null) acceptTagUrl = acceptLink.attr("href");
+            if (rejectLink != null) rejectTagUrl = rejectLink.attr("href");
+
+            // Parse tasks
+            List<Task> tasks = new ArrayList<>();
+            Element body = panel.selectFirst(".panel-body.work-orders-tasks");
+            if (body != null) {
+                Elements taskPanels = body.select(".task");
+                for (Element taskPanel : taskPanels) {
+                    Task task = parsePendingTaskPanel(taskPanel);
+                    if (task != null) {
+                        tasks.add(task);
+                    }
+                }
+            }
+
+            return WorkOrder.builder()
+                    .id(id)
+                    .title(title)
+                    .tag(tag)
+                    .dueDate(dueDate)
+                    .taskCount(taskCount)
+                    .completionStatus(duration.isEmpty() ? "" : "Duración: " + duration)
+                    .tasks(tasks)
+                    .acceptTagUrl(acceptTagUrl)
+                    .rejectTagUrl(rejectTagUrl)
+                    .build();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    /**
+     * Parse a pending task panel (has Accept/Reject buttons instead of detail link)
+     */
+    private Task parsePendingTaskPanel(Element taskPanel) {
+        try {
+            String panelId = taskPanel.attr("id");
+            String taskId = panelId.replace("-task", "");
+
+            Element header = taskPanel.selectFirst(".panel-heading");
+            String orderNumber = "";
+            String dueDate = "";
+            String dispatchType = "";
+
+            if (header != null) {
+                Element orderNum = header.selectFirst(".task-order-number");
+                orderNumber = orderNum != null ? orderNum.text().trim() : "";
+
+                Element dueDateEl = header.selectFirst(".task-order-due");
+                dueDate = dueDateEl != null ? dueDateEl.text().replace("vencimiento:", "").trim() : "";
+
+                Element dispatchEl = header.selectFirst(".task-order-auto");
+                dispatchType = dispatchEl != null ? dispatchEl.text().trim() : "";
+            }
+
+            Element body = taskPanel.selectFirst(".panel-body");
+            String location = "";
+            String department = "";
+            String machine = "";
+            String machinePart = "";
+            String title = "";
+            String description = "";
+            String product = "";
+
+            if (body != null) {
+                Element locationEl = body.selectFirst(".task-location div");
+                if (locationEl != null) {
+                    String[] parts = locationEl.text().trim().split("/");
+                    if (parts.length >= 1) location = parts[0].trim();
+                    if (parts.length >= 2) department = parts[1].trim();
+                }
+
+                Element machineEl = body.selectFirst(".task-machine div");
+                if (machineEl != null) {
+                    String[] parts = machineEl.text().trim().split("/");
+                    if (parts.length >= 1) machine = parts[0].trim();
+                    if (parts.length >= 2) machinePart = parts[1].trim();
+                }
+
+                Element titleEl = body.selectFirst(".task-order-title");
+                title = titleEl != null ? titleEl.text().trim() : "";
+
+                Element descEl = body.selectFirst(".task-title-box p");
+                if (descEl != null) {
+                    String descText = descEl.text().trim();
+                    if (descText.startsWith("(") && descText.endsWith(")")) {
+                        description = descText.substring(1, descText.length() - 1);
+                    }
+                }
+
+                Element productEl = body.selectFirst(".fa-oil-can + strong");
+                product = productEl != null ? productEl.text().trim() : "";
+            }
+
+            // Get accept/reject URLs
+            String acceptUrl = "";
+            String rejectUrl = "";
+            Element footer = taskPanel.selectFirst(".panel-footer");
+            if (footer != null) {
+                Element acceptLink = footer.selectFirst("a.accept");
+                Element rejectLink = footer.selectFirst("a.reject");
+                if (acceptLink != null) acceptUrl = acceptLink.attr("href");
+                if (rejectLink != null) rejectUrl = rejectLink.attr("href");
+            }
+
+            return Task.builder()
+                    .id(taskId)
+                    .orderNumber(orderNumber)
+                    .status("pending")
+                    .dueDate(dueDate)
+                    .dispatchType(dispatchType)
+                    .location(location)
+                    .department(department)
+                    .machine(machine)
+                    .machinePart(machinePart)
+                    .title(title)
+                    .description(description)
+                    .product(product)
+                    .assignedTo("")
+                    .detailUrl("")
+                    .acceptUrl(acceptUrl)
+                    .rejectUrl(rejectUrl)
+                    .build();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
         }
     }
 
@@ -509,6 +730,197 @@ public class WorkOrderService {
                     .followRedirects(true)
                     .ignoreHttpErrors(true)
                     .execute();
+
+            return response.statusCode() == 200 || response.statusCode() == 302;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    /**
+     * Reject a task with a reason
+     * The reject page returns a modal with a form containing:
+     * - description (textarea for reason)
+     * - csrf (hidden token)
+     * - submit
+     */
+    public boolean rejectTask(String taskId, String reason, String identity) {
+        try {
+            Map<String, String> cookies = sessionService.getCookies(identity);
+            if (cookies == null) {
+                throw new RuntimeException("Not logged in");
+            }
+
+            // Get the reject page to get the CSRF token
+            String rejectUrl = baseUrl + "/jobs-reject-" + taskId;
+            Document doc = Jsoup.connect(rejectUrl)
+                    .userAgent(USER_AGENT)
+                    .cookies(cookies)
+                    .timeout(15000)
+                    .ignoreContentType(true)
+                    .get();
+
+            // The response is JSON with modal HTML, extract CSRF from it
+            String html = doc.html();
+            
+            // Extract CSRF token from the HTML in JSON response
+            String csrfToken = "";
+            int csrfIndex = html.indexOf("name=\\\"csrf\\\" value=\\\"");
+            if (csrfIndex > 0) {
+                int start = csrfIndex + "name=\\\"csrf\\\" value=\\\"".length();
+                int end = html.indexOf("\\\"", start);
+                if (end > start) {
+                    csrfToken = html.substring(start, end);
+                }
+            }
+
+            // If still empty, try different escape pattern
+            if (csrfToken.isEmpty()) {
+                csrfIndex = html.indexOf("name=\"csrf\" value=\"");
+                if (csrfIndex > 0) {
+                    int start = csrfIndex + "name=\"csrf\" value=\"".length();
+                    int end = html.indexOf("\"", start);
+                    if (end > start) {
+                        csrfToken = html.substring(start, end);
+                    }
+                }
+            }
+
+            // Submit the reject form
+            Connection.Response response = Jsoup.connect(rejectUrl)
+                    .method(Connection.Method.POST)
+                    .userAgent(USER_AGENT)
+                    .cookies(cookies)
+                    .data("description", reason)
+                    .data("csrf", csrfToken)
+                    .data("submit", "Guardar")
+                    .timeout(15000)
+                    .ignoreContentType(true)
+                    .ignoreHttpErrors(true)
+                    .execute();
+
+            return response.statusCode() == 200 || response.statusCode() == 302;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    /**
+     * Accept a task
+     */
+    public boolean acceptTask(String taskId, String identity) {
+        try {
+            Map<String, String> cookies = sessionService.getCookies(identity);
+            if (cookies == null) {
+                throw new RuntimeException("Not logged in");
+            }
+
+            String acceptUrl = baseUrl + "/jobs-accept-" + taskId;
+            
+            Connection.Response response = Jsoup.connect(acceptUrl)
+                    .method(Connection.Method.GET)
+                    .userAgent(USER_AGENT)
+                    .cookies(cookies)
+                    .timeout(15000)
+                    .followRedirects(true)
+                    .ignoreContentType(true)
+                    .ignoreHttpErrors(true)
+                    .execute();
+
+            return response.statusCode() == 200 || response.statusCode() == 302;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    /**
+     * Get service ID for a task (needed for comments)
+     * The service ID is found on the task detail page
+     */
+    public String getServiceId(String taskId, String identity) {
+        try {
+            String taskUrl = baseUrl + "/engineer-task-detail-" + taskId;
+            Document doc = getPage(taskUrl, identity);
+            
+            // Find the "nuevo comentario" link which contains the service ID
+            Element commentLink = doc.selectFirst("a[href*=service-remark-create]");
+            if (commentLink != null) {
+                String href = commentLink.attr("href");
+                // Extract service ID from href like "/service-remark-create-1191426"
+                return href.replace("/service-remark-create-", "").trim();
+            }
+            
+            return null;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    /**
+     * Add a comment to a task using the service ID
+     */
+    public boolean addCommentWithServiceId(String serviceId, String commentText, byte[] imageData, String imageName, String identity) {
+        try {
+            Map<String, String> cookies = sessionService.getCookies(identity);
+            if (cookies == null) {
+                throw new RuntimeException("Not logged in");
+            }
+
+            // Get the comment form page to get CSRF token
+            String formUrl = baseUrl + "/service-remark-create-" + serviceId;
+            Document doc = Jsoup.connect(formUrl)
+                    .userAgent(USER_AGENT)
+                    .cookies(cookies)
+                    .timeout(15000)
+                    .ignoreContentType(true)
+                    .get();
+
+            // Extract CSRF token from JSON response
+            String html = doc.html();
+            String csrfToken = "";
+            int csrfIndex = html.indexOf("name=\"csrf\" value=\"");
+            if (csrfIndex > 0) {
+                int start = csrfIndex + "name=\"csrf\" value=\"".length();
+                int end = html.indexOf("\"", start);
+                if (end > start) {
+                    csrfToken = html.substring(start, end);
+                }
+            }
+
+            // Submit the comment form
+            Connection.Response response;
+            if (imageData != null && imageName != null && !imageName.isEmpty()) {
+                // Submit with image using multipart
+                response = Jsoup.connect(formUrl)
+                        .method(Connection.Method.POST)
+                        .userAgent(USER_AGENT)
+                        .cookies(cookies)
+                        .data("csrf", csrfToken)
+                        .data("serviceRemark[text]", commentText)
+                        .data("serviceRemark[id]", "")
+                        .data("submit", "Añadir comentario")
+                        .header("Content-Type", "multipart/form-data")
+                        .timeout(30000)
+                        .ignoreHttpErrors(true)
+                        .execute();
+            } else {
+                // Submit without image
+                response = Jsoup.connect(formUrl)
+                        .method(Connection.Method.POST)
+                        .userAgent(USER_AGENT)
+                        .cookies(cookies)
+                        .data("csrf", csrfToken)
+                        .data("serviceRemark[text]", commentText)
+                        .data("serviceRemark[id]", "")
+                        .data("submit", "Añadir comentario")
+                        .timeout(15000)
+                        .ignoreHttpErrors(true)
+                        .execute();
+            }
 
             return response.statusCode() == 200 || response.statusCode() == 302;
         } catch (Exception e) {

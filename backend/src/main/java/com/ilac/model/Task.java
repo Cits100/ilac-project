@@ -25,4 +25,6 @@ public class Task {
     private String assignedTo;
     private String detailUrl;
     private TaskDetail detail;
+    private String acceptUrl;
+    private String rejectUrl;
 }

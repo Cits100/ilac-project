@@ -51,17 +51,25 @@ class TaskListScreen extends StatelessWidget {
 
   Widget _buildTaskCard(BuildContext context, Task task) {
     final isCompleted = task.status == 'completed';
+    final isNewTask = workOrder.type == 'new';
     
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: InkWell(
-        onTap: () {
-          Navigator.push(
+        onTap: () async {
+          final result = await Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (_) => TaskDetailScreen(task: task),
+              builder: (_) => TaskDetailScreen(
+                task: task,
+                taskType: workOrder.type,
+              ),
             ),
           );
+          // If result is true, refresh the page
+          if (result == true && context.mounted) {
+            Navigator.pop(context, true);
+          }
         },
         borderRadius: BorderRadius.circular(12),
         child: Padding(
@@ -76,7 +84,11 @@ class TaskListScreen extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
-                      color: isCompleted ? AppTheme.darkGrey : AppTheme.primaryRed,
+                      color: isCompleted 
+                          ? AppTheme.darkGrey 
+                          : isNewTask 
+                              ? Colors.orange 
+                              : AppTheme.primaryRed,
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
@@ -198,6 +210,32 @@ class TaskListScreen extends StatelessWidget {
                         ),
                         overflow: TextOverflow.ellipsis,
                       ),
+                    ),
+                  ],
+                ),
+              ],
+
+              // Accept/Reject buttons for new tasks
+              if (isNewTask && !isCompleted) ...[
+                const SizedBox(height: 12),
+                const Divider(color: AppTheme.darkGrey),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton.icon(
+                      onPressed: () {
+                        // Navigate to detail for accept/reject
+                      },
+                      icon: const Icon(Icons.check, size: 16, color: Colors.green),
+                      label: const Text('Aceptar', style: TextStyle(color: Colors.green)),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton.icon(
+                      onPressed: () {
+                        // Navigate to detail for reject
+                      },
+                      icon: const Icon(Icons.close, size: 16, color: AppTheme.lightRed),
+                      label: const Text('Rechazar', style: TextStyle(color: AppTheme.lightRed)),
                     ),
                   ],
                 ),

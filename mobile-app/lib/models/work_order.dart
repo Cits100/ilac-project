@@ -6,7 +6,9 @@ class WorkOrder {
   final String taskCount;
   final String completionStatus;
   final List<Task> tasks;
-  final String type; // 'team' or 'personal'
+  final String type; // 'team', 'personal', or 'new'
+  final String? acceptTagUrl;
+  final String? rejectTagUrl;
 
   WorkOrder({
     required this.id,
@@ -17,6 +19,8 @@ class WorkOrder {
     required this.completionStatus,
     required this.tasks,
     required this.type,
+    this.acceptTagUrl,
+    this.rejectTagUrl,
   });
 
   factory WorkOrder.fromJson(Map<String, dynamic> json, String type) {
@@ -32,6 +36,8 @@ class WorkOrder {
               .toList() ??
           [],
       type: type,
+      acceptTagUrl: json['acceptTagUrl'],
+      rejectTagUrl: json['rejectTagUrl'],
     );
   }
 
@@ -44,6 +50,8 @@ class WorkOrder {
       'taskCount': taskCount,
       'completionStatus': completionStatus,
       'type': type,
+      'acceptTagUrl': acceptTagUrl,
+      'rejectTagUrl': rejectTagUrl,
     };
   }
 
@@ -57,6 +65,8 @@ class WorkOrder {
       completionStatus: map['completionStatus'],
       tasks: tasks,
       type: map['type'],
+      acceptTagUrl: map['acceptTagUrl'],
+      rejectTagUrl: map['rejectTagUrl'],
     );
   }
 }
@@ -77,6 +87,8 @@ class Task {
   final String assignedTo;
   final String detailUrl;
   final TaskDetail? detail;
+  final String? acceptUrl;
+  final String? rejectUrl;
 
   Task({
     required this.id,
@@ -94,6 +106,8 @@ class Task {
     required this.assignedTo,
     required this.detailUrl,
     this.detail,
+    this.acceptUrl,
+    this.rejectUrl,
   });
 
   factory Task.fromJson(Map<String, dynamic> json) {
@@ -113,6 +127,8 @@ class Task {
       assignedTo: json['assignedTo'] ?? '',
       detailUrl: json['detailUrl'] ?? '',
       detail: json['detail'] != null ? TaskDetail.fromJson(json['detail']) : null,
+      acceptUrl: json['acceptUrl'],
+      rejectUrl: json['rejectUrl'],
     );
   }
 
@@ -132,6 +148,8 @@ class Task {
       'product': product,
       'assignedTo': assignedTo,
       'detailUrl': detailUrl,
+      'acceptUrl': acceptUrl,
+      'rejectUrl': rejectUrl,
     };
   }
 
@@ -152,6 +170,8 @@ class Task {
       assignedTo: map['assignedTo'],
       detailUrl: map['detailUrl'],
       detail: detail,
+      acceptUrl: map['acceptUrl'],
+      rejectUrl: map['rejectUrl'],
     );
   }
 }

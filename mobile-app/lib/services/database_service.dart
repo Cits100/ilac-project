@@ -19,13 +19,27 @@ class DatabaseService {
     String path = join(await getDatabasesPath(), 'ilac_app.db');
     return await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
     );
   }
 
   Future<void> _onCreate(Database db, int version) async {
-    // Work Orders table
+    await _createTables(db);
+  }
+
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      // Add new columns for accept/reject URLs
+      await db.execute('ALTER TABLE work_orders ADD COLUMN acceptTagUrl TEXT');
+      await db.execute('ALTER TABLE work_orders ADD COLUMN rejectTagUrl TEXT');
+      await db.execute('ALTER TABLE tasks ADD COLUMN acceptUrl TEXT');
+      await db.execute('ALTER TABLE tasks ADD COLUMN rejectUrl TEXT');
+    }
+  }
+
+  Future<void> _createTables(Database db) async {
     await db.execute('''
       CREATE TABLE work_orders (
         id TEXT PRIMARY KEY,
@@ -34,11 +48,12 @@ class DatabaseService {
         dueDate TEXT,
         taskCount TEXT,
         completionStatus TEXT,
-        type TEXT
+        type TEXT,
+        acceptTagUrl TEXT,
+        rejectTagUrl TEXT
       )
     ''');
 
-    // Tasks table
     await db.execute('''
       CREATE TABLE tasks (
         id TEXT PRIMARY KEY,
@@ -56,11 +71,12 @@ class DatabaseService {
         product TEXT,
         assignedTo TEXT,
         detailUrl TEXT,
+        acceptUrl TEXT,
+        rejectUrl TEXT,
         FOREIGN KEY (workOrderId) REFERENCES work_orders(id) ON DELETE CASCADE
       )
     ''');
 
-    // Task Details table
     await db.execute('''
       CREATE TABLE task_details (
         taskId TEXT PRIMARY KEY,
@@ -78,7 +94,6 @@ class DatabaseService {
       )
     ''');
 
-    // Offline queue for pending actions
     await db.execute('''
       CREATE TABLE offline_queue (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,12 +102,12 @@ class DatabaseService {
         comment TEXT,
         imageBase64 TEXT,
         imageName TEXT,
+        reason TEXT,
         createdAt TEXT,
         retryCount INTEGER DEFAULT 0
       )
     ''');
 
-    // User session
     await db.execute('''
       CREATE TABLE user_session (
         id INTEGER PRIMARY KEY,
@@ -183,8 +198,8 @@ class DatabaseService {
 
   // ========== OFFLINE QUEUE ==========
 
-  Future<void> addToQueue(String actionType, String taskId, 
-      {String? comment, String? imageBase64, String? imageName}) async {
+  Future<void> addToQueue(String actionType, String taskId,
+      {String? comment, String? imageBase64, String? imageName, String? reason}) async {
     final db = await database;
     await db.insert('offline_queue', {
       'actionType': actionType,
@@ -192,6 +207,7 @@ class DatabaseService {
       'comment': comment,
       'imageBase64': imageBase64,
       'imageName': imageName,
+      'reason': reason,
       'createdAt': DateTime.now().toIso8601String(),
       'retryCount': 0,
     });

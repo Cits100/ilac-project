@@ -27,11 +27,16 @@ class ApiService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (data['success'] == true) {
-          // Parse work orders
+          List<WorkOrder> newOrders = [];
           List<WorkOrder> teamOrders = [];
           List<WorkOrder> myOrders = [];
 
           if (data['workOrders'] != null) {
+            if (data['workOrders']['newWorkOrders'] != null) {
+              newOrders = (data['workOrders']['newWorkOrders'] as List)
+                  .map((o) => WorkOrder.fromJson(o, 'new'))
+                  .toList();
+            }
             if (data['workOrders']['teamWorkOrders'] != null) {
               teamOrders = (data['workOrders']['teamWorkOrders'] as List)
                   .map((o) => WorkOrder.fromJson(o, 'team'))
@@ -48,6 +53,7 @@ class ApiService {
             'success': true,
             'message': data['message'],
             'userName': data['userName'],
+            'newWorkOrders': newOrders,
             'teamWorkOrders': teamOrders,
             'myWorkOrders': myOrders,
           };
@@ -124,6 +130,72 @@ class ApiService {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/complete-task'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'identity': identity,
+          'credential': credential,
+          'taskId': taskId,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        return {
+          'success': false,
+          'message': 'Error del servidor: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      return {
+        'success': false,
+        'message': 'Error de conexión: $e',
+      };
+    }
+  }
+
+  Future<Map<String, dynamic>> rejectTask(
+    String identity,
+    String credential,
+    String taskId,
+    String reason,
+  ) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/reject-task'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'identity': identity,
+          'credential': credential,
+          'taskId': taskId,
+          'reason': reason,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        return {
+          'success': false,
+          'message': 'Error del servidor: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      return {
+        'success': false,
+        'message': 'Error de conexión: $e',
+      };
+    }
+  }
+
+  Future<Map<String, dynamic>> acceptTask(
+    String identity,
+    String credential,
+    String taskId,
+  ) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/accept-task'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'identity': identity,

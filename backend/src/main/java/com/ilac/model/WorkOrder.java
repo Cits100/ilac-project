@@ -19,4 +19,6 @@ public class WorkOrder {
     private String taskCount;
     private String completionStatus;
     private List<Task> tasks;
+    private String acceptTagUrl;
+    private String rejectTagUrl;
 }

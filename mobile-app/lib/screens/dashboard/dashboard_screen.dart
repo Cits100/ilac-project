@@ -17,6 +17,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final AuthService _authService = AuthService();
   final ConnectivityService _connectivityService = ConnectivityService();
   
+  List<WorkOrder> _newOrders = [];
   List<WorkOrder> _teamOrders = [];
   List<WorkOrder> _personalOrders = [];
   bool _isLoading = true;
@@ -35,11 +36,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
 
     try {
+      final newOrders = await _authService.getNewWorkOrders();
       final teamOrders = await _authService.getTeamWorkOrders();
       final personalOrders = await _authService.getPersonalWorkOrders();
       final queueCount = await _connectivityService.getQueueCount();
 
       setState(() {
+        _newOrders = newOrders;
         _teamOrders = teamOrders;
         _personalOrders = personalOrders;
         _pendingQueueCount = queueCount;
@@ -193,6 +196,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                   const SizedBox(height: 24),
 
+                  // New Work Orders (Nuevas ordenes de trabajo)
+                  _buildSection(
+                    title: 'Nuevas Órdenes de Trabajo',
+                    icon: Icons.new_releases,
+                    count: _newOrders.fold(0, (sum, wo) => sum + wo.tasks.length),
+                    orders: _newOrders,
+                    type: 'new',
+                    color: Colors.orange,
+                  ),
+                  const SizedBox(height: 16),
+
                   // Team Work Orders
                   _buildSection(
                     title: 'Órdenes de Trabajo del Equipo',
@@ -223,7 +237,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     required int count,
     required List<WorkOrder> orders,
     required String type,
+    Color? color,
   }) {
+    final sectionColor = color ?? AppTheme.primaryRed;
+    
     return Card(
       child: InkWell(
         onTap: () {
@@ -246,7 +263,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             children: [
               Row(
                 children: [
-                  Icon(icon, color: AppTheme.primaryRed, size: 28),
+                  Icon(icon, color: sectionColor, size: 28),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
@@ -261,7 +278,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
-                      color: count > 0 ? AppTheme.primaryRed : AppTheme.darkGrey,
+                      color: count > 0 ? sectionColor : AppTheme.darkGrey,
                       borderRadius: BorderRadius.circular(16),
                     ),
                     child: Text(
@@ -284,8 +301,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     children: [
                       Text(
                         wo.tag,
-                        style: const TextStyle(
-                          color: AppTheme.primaryRed,
+                        style: TextStyle(
+                          color: sectionColor,
                           fontWeight: FontWeight.bold,
                         ),
                       ),

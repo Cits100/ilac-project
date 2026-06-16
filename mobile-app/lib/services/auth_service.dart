@@ -33,9 +33,11 @@ class AuthService {
       // Save work orders to local DB
       await _dbService.clearWorkOrders();
       
+      List<WorkOrder> newOrders = result['newWorkOrders'] ?? [];
       List<WorkOrder> teamOrders = result['teamWorkOrders'] ?? [];
       List<WorkOrder> myOrders = result['myWorkOrders'] ?? [];
       
+      await _dbService.insertWorkOrders(newOrders);
       await _dbService.insertWorkOrders(teamOrders);
       await _dbService.insertWorkOrders(myOrders);
     }
@@ -62,9 +64,11 @@ class AuthService {
         // Update local DB
         await _dbService.clearWorkOrders();
         
+        List<WorkOrder> newOrders = result['newWorkOrders'] ?? [];
         List<WorkOrder> teamOrders = result['teamWorkOrders'] ?? [];
         List<WorkOrder> myOrders = result['myWorkOrders'] ?? [];
         
+        await _dbService.insertWorkOrders(newOrders);
         await _dbService.insertWorkOrders(teamOrders);
         await _dbService.insertWorkOrders(myOrders);
         
@@ -96,6 +100,10 @@ class AuthService {
     await _dbService.clearWorkOrders();
   }
 
+  Future<List<WorkOrder>> getNewWorkOrders() async {
+    return await _dbService.getWorkOrders('new');
+  }
+
   Future<List<WorkOrder>> getTeamWorkOrders() async {
     return await _dbService.getWorkOrders('team');
   }
@@ -114,9 +122,11 @@ class AuthService {
     if (result['success'] == true) {
       await _dbService.clearWorkOrders();
       
+      List<WorkOrder> newOrders = result['newWorkOrders'] ?? [];
       List<WorkOrder> teamOrders = result['teamWorkOrders'] ?? [];
       List<WorkOrder> myOrders = result['myWorkOrders'] ?? [];
       
+      await _dbService.insertWorkOrders(newOrders);
       await _dbService.insertWorkOrders(teamOrders);
       await _dbService.insertWorkOrders(myOrders);
     }
@@ -150,6 +160,31 @@ class AuthService {
     }
 
     return await _apiService.completeTask(
+      _currentIdentity!,
+      _currentCredential!,
+      taskId,
+    );
+  }
+
+  Future<Map<String, dynamic>> rejectTask(String taskId, String reason) async {
+    if (_currentIdentity == null || _currentCredential == null) {
+      return {'success': false, 'message': 'No hay sesión activa'};
+    }
+
+    return await _apiService.rejectTask(
+      _currentIdentity!,
+      _currentCredential!,
+      taskId,
+      reason,
+    );
+  }
+
+  Future<Map<String, dynamic>> acceptTask(String taskId) async {
+    if (_currentIdentity == null || _currentCredential == null) {
+      return {'success': false, 'message': 'No hay sesión activa'};
+    }
+
+    return await _apiService.acceptTask(
       _currentIdentity!,
       _currentCredential!,
       taskId,

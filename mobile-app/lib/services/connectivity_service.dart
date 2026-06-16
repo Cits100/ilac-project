@@ -33,13 +33,14 @@ class ConnectivityService {
   }
 
   Future<void> addToQueue(String actionType, String taskId,
-      {String? comment, String? imageBase64, String? imageName}) async {
+      {String? comment, String? imageBase64, String? imageName, String? reason}) async {
     await _dbService.addToQueue(
       actionType,
       taskId,
       comment: comment,
       imageBase64: imageBase64,
       imageName: imageName,
+      reason: reason,
     );
 
     // Try to process immediately if connected
@@ -62,6 +63,7 @@ class ConnectivityService {
         final comment = item['comment'] as String?;
         final imageBase64 = item['imageBase64'] as String?;
         final imageName = item['imageName'] as String?;
+        final reason = item['reason'] as String?;
         final retryCount = item['retryCount'] as int;
 
         // Skip if too many retries
@@ -82,6 +84,12 @@ class ConnectivityService {
           success = result['success'] == true;
         } else if (actionType == 'complete') {
           final result = await _authService.completeTask(taskId);
+          success = result['success'] == true;
+        } else if (actionType == 'reject') {
+          final result = await _authService.rejectTask(taskId, reason ?? '');
+          success = result['success'] == true;
+        } else if (actionType == 'accept') {
+          final result = await _authService.acceptTask(taskId);
           success = result['success'] == true;
         }
 

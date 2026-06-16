@@ -10,10 +10,12 @@ import '../../services/connectivity_service.dart';
 
 class TaskDetailScreen extends StatefulWidget {
   final Task task;
+  final String taskType; // 'new', 'team', or 'personal'
 
   const TaskDetailScreen({
     super.key,
     required this.task,
+    this.taskType = 'personal',
   });
 
   @override
@@ -24,20 +26,23 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   final AuthService _authService = AuthService();
   final ConnectivityService _connectivityService = ConnectivityService();
   final TextEditingController _commentController = TextEditingController();
+  final TextEditingController _rejectReasonController = TextEditingController();
   final ImagePicker _imagePicker = ImagePicker();
   
   File? _selectedImage;
   bool _isSubmitting = false;
   bool _isCompleting = false;
+  bool _isRejecting = false;
+  bool _isAccepting = false;
 
   @override
   void dispose() {
     _commentController.dispose();
+    _rejectReasonController.dispose();
     super.dispose();
   }
 
   Future<void> _pickImage() async {
-    // Request permissions
     final cameraStatus = await Permission.camera.request();
     final storageStatus = await Permission.photos.request();
 
@@ -114,11 +119,9 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       imageName = _selectedImage!.path.split('/').last;
     }
 
-    // Check connectivity
     final isConnected = await _connectivityService.isConnected();
 
     if (isConnected) {
-      // Submit directly
       final result = await _authService.addComment(
         widget.task.id,
         _commentController.text.trim(),
@@ -140,7 +143,6 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           );
         }
       } else {
-        // Add to queue if failed
         await _connectivityService.addToQueue(
           'comment',
           widget.task.id,
@@ -158,7 +160,6 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         }
       }
     } else {
-      // Add to queue
       await _connectivityService.addToQueue(
         'comment',
         widget.task.id,
@@ -226,10 +227,9 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               backgroundColor: Colors.green,
             ),
           );
-          Navigator.pop(context, true); // Return true to refresh
+          Navigator.pop(context, true);
         }
       } else {
-        // Add to queue
         await _connectivityService.addToQueue('complete', widget.task.id);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -241,7 +241,6 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         }
       }
     } else {
-      // Add to queue
       await _connectivityService.addToQueue('complete', widget.task.id);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -258,17 +257,177 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     });
   }
 
+  Future<void> _rejectTask() async {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.darkGrey,
+        title: const Text('Rechazar Tarea', style: TextStyle(color: AppTheme.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Ingrese el motivo del rechazo:',
+              style: TextStyle(color: AppTheme.lightGrey),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _rejectReasonController,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                hintText: 'Motivo del rechazo...',
+                hintStyle: TextStyle(color: AppTheme.grey),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              _rejectReasonController.clear();
+              Navigator.pop(context);
+            },
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () async {
+              if (_rejectReasonController.text.trim().isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Ingrese un motivo'),
+                    backgroundColor: AppTheme.darkRed,
+                  ),
+                );
+                return;
+              }
+              Navigator.pop(context);
+              await _doRejectTask();
+            },
+            child: const Text('Rechazar', style: TextStyle(color: AppTheme.lightRed)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _doRejectTask() async {
+    setState(() {
+      _isRejecting = true;
+    });
+
+    final reason = _rejectReasonController.text.trim();
+    final isConnected = await _connectivityService.isConnected();
+
+    if (isConnected) {
+      final result = await _authService.rejectTask(widget.task.id, reason);
+
+      if (result['success'] == true) {
+        _rejectReasonController.clear();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Tarea rechazada'),
+              backgroundColor: Colors.green,
+            ),
+          );
+          Navigator.pop(context, true);
+        }
+      } else {
+        await _connectivityService.addToQueue(
+          'reject',
+          widget.task.id,
+          reason: reason,
+        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Acción guardada para enviar cuando haya conexión'),
+              backgroundColor: AppTheme.primaryRed,
+            ),
+          );
+        }
+      }
+    } else {
+      await _connectivityService.addToQueue(
+        'reject',
+        widget.task.id,
+        reason: reason,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Acción guardada para enviar cuando haya conexión'),
+            backgroundColor: AppTheme.primaryRed,
+          ),
+        );
+      }
+    }
+
+    setState(() {
+      _isRejecting = false;
+    });
+  }
+
+  Future<void> _acceptTask() async {
+    setState(() {
+      _isAccepting = true;
+    });
+
+    final isConnected = await _connectivityService.isConnected();
+
+    if (isConnected) {
+      final result = await _authService.acceptTask(widget.task.id);
+
+      if (result['success'] == true) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Tarea aceptada'),
+              backgroundColor: Colors.green,
+            ),
+          );
+          Navigator.pop(context, true);
+        }
+      } else {
+        await _connectivityService.addToQueue('accept', widget.task.id);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Acción guardada para enviar cuando haya conexión'),
+              backgroundColor: AppTheme.primaryRed,
+            ),
+          );
+        }
+      }
+    } else {
+      await _connectivityService.addToQueue('accept', widget.task.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Acción guardada para enviar cuando haya conexión'),
+            backgroundColor: AppTheme.primaryRed,
+          ),
+        );
+      }
+    }
+
+    setState(() {
+      _isAccepting = false;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final task = widget.task;
     final detail = task.detail;
     final isCompleted = task.status == 'completed';
+    final isNewTask = widget.taskType == 'new';
 
     return Scaffold(
       appBar: AppBar(
         title: Text('Tarea #${task.orderNumber}'),
         actions: [
-          if (!isCompleted)
+          if (!isCompleted && !isNewTask)
             IconButton(
               icon: const Icon(Icons.check_circle_outline),
               onPressed: _isCompleting ? null : _completeTask,
@@ -306,6 +465,56 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 ),
               ),
             if (isCompleted) const SizedBox(height: 16),
+
+            // Accept/Reject buttons for new tasks
+            if (isNewTask && !isCompleted) ...[
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: _isAccepting ? null : _acceptTask,
+                      icon: _isAccepting
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppTheme.white,
+                              ),
+                            )
+                          : const Icon(Icons.check),
+                      label: const Text('Aceptar'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: _isRejecting ? null : _rejectTask,
+                      icon: _isRejecting
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppTheme.white,
+                              ),
+                            )
+                          : const Icon(Icons.close),
+                      label: const Text('Rechazar'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.primaryRed,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+            ],
 
             // Task info card
             Card(
@@ -377,104 +586,98 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 ),
               ),
             ],
-            const SizedBox(height: 24),
 
-            // Comment section
-            const Text(
-              'Agregar Comentario',
-              style: TextStyle(
-                color: AppTheme.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
+            // Comment section (not for new tasks)
+            if (!isNewTask) ...[
+              const SizedBox(height: 24),
+              const Text(
+                'Agregar Comentario',
+                style: TextStyle(
+                  color: AppTheme.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-            
-            // Image preview
-            if (_selectedImage != null)
-              Stack(
+              const SizedBox(height: 8),
+              
+              // Image preview
+              if (_selectedImage != null)
+                Stack(
+                  children: [
+                    Container(
+                      width: double.infinity,
+                      height: 200,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        image: DecorationImage(
+                          image: FileImage(_selectedImage!),
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: CircleAvatar(
+                        backgroundColor: AppTheme.darkRed,
+                        radius: 16,
+                        child: IconButton(
+                          icon: const Icon(Icons.close, size: 16, color: AppTheme.white),
+                          onPressed: () {
+                            setState(() {
+                              _selectedImage = null;
+                            });
+                          },
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              if (_selectedImage != null) const SizedBox(height: 8),
+              
+              // Comment input
+              TextField(
+                controller: _commentController,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  hintText: 'Escriba su comentario...',
+                  hintStyle: TextStyle(color: AppTheme.grey),
+                ),
+              ),
+              const SizedBox(height: 8),
+              
+              // Action buttons
+              Row(
                 children: [
-                  Container(
-                    width: double.infinity,
-                    height: 200,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(8),
-                      image: DecorationImage(
-                        image: FileImage(_selectedImage!),
-                        fit: BoxFit.cover,
-                      ),
-                    ),
+                  IconButton(
+                    onPressed: _pickImage,
+                    icon: const Icon(Icons.image, color: AppTheme.primaryRed),
+                    tooltip: 'Agregar imagen',
                   ),
-                  Positioned(
-                    top: 8,
-                    right: 8,
-                    child: CircleAvatar(
-                      backgroundColor: AppTheme.darkRed,
-                      radius: 16,
-                      child: IconButton(
-                        icon: const Icon(Icons.close, size: 16, color: AppTheme.white),
-                        onPressed: () {
-                          setState(() {
-                            _selectedImage = null;
-                          });
-                        },
-                      ),
-                    ),
+                  IconButton(
+                    onPressed: _pickImage,
+                    icon: const Icon(Icons.camera_alt, color: AppTheme.primaryRed),
+                    tooltip: 'Tomar foto',
+                  ),
+                  const Spacer(),
+                  
+                  ElevatedButton.icon(
+                    onPressed: _isSubmitting ? null : _submitComment,
+                    icon: _isSubmitting
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppTheme.white,
+                            ),
+                          )
+                        : const Icon(Icons.send),
+                    label: const Text('Enviar'),
                   ),
                 ],
               ),
-            if (_selectedImage != null) const SizedBox(height: 8),
-            
-            // Comment input
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _commentController,
-                    maxLines: 3,
-                    decoration: const InputDecoration(
-                      hintText: 'Escriba su comentario...',
-                      hintStyle: TextStyle(color: AppTheme.grey),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            
-            // Action buttons
-            Row(
-              children: [
-                // Image button
-                IconButton(
-                  onPressed: _pickImage,
-                  icon: const Icon(Icons.image, color: AppTheme.primaryRed),
-                  tooltip: 'Agregar imagen',
-                ),
-                IconButton(
-                  onPressed: _pickImage,
-                  icon: const Icon(Icons.camera_alt, color: AppTheme.primaryRed),
-                  tooltip: 'Tomar foto',
-                ),
-                const Spacer(),
-                
-                // Submit button
-                ElevatedButton.icon(
-                  onPressed: _isSubmitting ? null : _submitComment,
-                  icon: _isSubmitting
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: AppTheme.white,
-                          ),
-                        )
-                      : const Icon(Icons.send),
-                  label: const Text('Enviar'),
-                ),
-              ],
-            ),
+            ],
             const SizedBox(height: 16),
           ],
         ),
