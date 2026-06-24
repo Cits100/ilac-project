@@ -74,7 +74,23 @@ class AuthService {
         
         return true;
       } else {
-        // Login failed, clear session
+        // Login failed - check if it's bad credentials or a server issue
+        String errorType = result['errorType'] ?? 'auth';
+
+        if (errorType == 'auth') {
+          // Bad credentials - wipe everything
+          await logout();
+          return false;
+        }
+
+        // Server/connection error - try cached data
+        final session = await _dbService.getSession();
+        if (session != null) {
+          _currentIdentity = session['identity'];
+          _currentCredential = session['encryptedPassword'];
+          return true;
+        }
+
         await logout();
         return false;
       }

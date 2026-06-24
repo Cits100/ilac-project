@@ -64,15 +64,26 @@ class ApiService {
           };
         }
       } else {
+        String message = 'Error del servidor: ${response.statusCode}';
+        try {
+          final body = jsonDecode(response.body);
+          if (body['message'] != null) message = body['message'];
+        } catch (_) {}
+
+        String errorType = 'server';
+        if (response.statusCode == 401) errorType = 'auth';
+
         return {
           'success': false,
-          'message': 'Error del servidor: ${response.statusCode}',
+          'message': message,
+          'errorType': errorType,
         };
       }
     } catch (e) {
       return {
         'success': false,
         'message': 'Error de conexión: $e',
+        'errorType': 'connection',
       };
     }
   }

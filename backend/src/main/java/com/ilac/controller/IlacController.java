@@ -32,7 +32,9 @@ public class IlacController {
         LoginResponse loginResult = sessionService.login(request);
         
         if (!loginResult.isSuccess()) {
-            return ResponseEntity.status(401).body(FullDashboardResponse.builder()
+            int status = loginResult.getMessage() != null
+                    && loginResult.getMessage().contains("Invalid credentials") ? 401 : 503;
+            return ResponseEntity.status(status).body(FullDashboardResponse.builder()
                     .success(false)
                     .message(loginResult.getMessage())
                     .build());
