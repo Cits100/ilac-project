@@ -27,6 +27,43 @@ public class IlacController {
     private WorkOrderService workOrderService;
 
     /**
+     * Debug: Get raw HTML of comment form
+     * POST /api/debug/comment-form
+     */
+    @PostMapping("/debug/comment-form")
+    public ResponseEntity<Map<String, Object>> debugCommentForm(@RequestBody TaskActionRequest request) {
+        logger.info("DEBUG /api/debug/comment-form - Tarea: {}", request.getTaskId());
+        
+        LoginRequest loginRequest = new LoginRequest(request.getIdentity(), request.getCredential());
+        LoginResponse loginResult = sessionService.login(loginRequest);
+
+        if (!loginResult.isSuccess()) {
+            return ResponseEntity.status(401).body(Map.of("success", false, "message", "Login fallido"));
+        }
+
+        try {
+            // Get service ID
+            String serviceId = workOrderService.getServiceId(request.getTaskId(), request.getIdentity());
+            if (serviceId == null) {
+                return ResponseEntity.ok(Map.of("success", false, "message", "No se encontró serviceId"));
+            }
+
+            // Get the raw HTML of the form page
+            String formUrl = "https://ilac.interflon.net/service-remark-create-" + serviceId;
+            String html = workOrderService.getRawHtml(formUrl, request.getIdentity());
+            
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "serviceId", serviceId,
+                "formUrl", formUrl,
+                "html", html
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.ok(Map.of("success", false, "message", e.getMessage()));
+        }
+    }
+
+    /**
      * Login and get all work orders with task details in one call
      * POST /api/dashboard
      * Returns: newWorkOrders, teamWorkOrders, myWorkOrders

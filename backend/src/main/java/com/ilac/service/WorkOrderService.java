@@ -946,21 +946,34 @@ public class WorkOrderService {
                     .ignoreContentType(true)
                     .get();
 
-            // Extract CSRF token from JSON response (handles both escaped and unescaped HTML)
+            // Extract CSRF token from JSON response
+            // The response has Unicode escapes: \u0022 for quotes
             String html = doc.html();
             String csrfToken = "";
             
-            // Try escaped pattern first (JSON response: name=\"csrf\" value=\"...\")
-            int csrfIndex = html.indexOf("name=\\\"csrf\\\" value=\\\"");
+            // Try Unicode escaped pattern: name=\u0022csrf\u0022 value=\u0022...\u0022
+            int csrfIndex = html.indexOf("name=\\u0022csrf\\u0022 value=\\u0022");
             if (csrfIndex > 0) {
-                int start = csrfIndex + "name=\\\"csrf\\\" value=\\\"".length();
-                int end = html.indexOf("\\\"", start);
+                int start = csrfIndex + "name=\\u0022csrf\\u0022 value=\\u0022".length();
+                int end = html.indexOf("\\u0022", start);
                 if (end > start) {
                     csrfToken = html.substring(start, end);
                 }
             }
             
-            // If still empty, try unescaped pattern
+            // Try escaped pattern: name=\"csrf\" value=\"...\"
+            if (csrfToken.isEmpty()) {
+                csrfIndex = html.indexOf("name=\\\"csrf\\\" value=\\\"");
+                if (csrfIndex > 0) {
+                    int start = csrfIndex + "name=\\\"csrf\\\" value=\\\"".length();
+                    int end = html.indexOf("\\\"", start);
+                    if (end > start) {
+                        csrfToken = html.substring(start, end);
+                    }
+                }
+            }
+            
+            // Try unescaped pattern: name="csrf" value="..."
             if (csrfToken.isEmpty()) {
                 csrfIndex = html.indexOf("name=\"csrf\" value=\"");
                 if (csrfIndex > 0) {
@@ -974,6 +987,8 @@ public class WorkOrderService {
 
             if (csrfToken.isEmpty()) {
                 logger.warn("No se encontró token CSRF para comentario - ServiceId: {}", serviceId);
+                // Log first 500 chars for debugging
+                logger.debug("HTML response (first 500 chars): {}", html.substring(0, Math.min(500, html.length())));
             } else {
                 logger.debug("Token CSRF obtenido para comentario: {}...", csrfToken.substring(0, Math.min(20, csrfToken.length())));
             }
