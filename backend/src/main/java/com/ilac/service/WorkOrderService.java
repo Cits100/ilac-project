@@ -946,22 +946,36 @@ public class WorkOrderService {
                     .ignoreContentType(true)
                     .get();
 
-            // Extract CSRF token from JSON response
+            // Extract CSRF token from JSON response (handles both escaped and unescaped HTML)
             String html = doc.html();
             String csrfToken = "";
-            int csrfIndex = html.indexOf("name=\"csrf\" value=\"");
+            
+            // Try escaped pattern first (JSON response: name=\"csrf\" value=\"...\")
+            int csrfIndex = html.indexOf("name=\\\"csrf\\\" value=\\\"");
             if (csrfIndex > 0) {
-                int start = csrfIndex + "name=\"csrf\" value=\"".length();
-                int end = html.indexOf("\"", start);
+                int start = csrfIndex + "name=\\\"csrf\\\" value=\\\"".length();
+                int end = html.indexOf("\\\"", start);
                 if (end > start) {
                     csrfToken = html.substring(start, end);
+                }
+            }
+            
+            // If still empty, try unescaped pattern
+            if (csrfToken.isEmpty()) {
+                csrfIndex = html.indexOf("name=\"csrf\" value=\"");
+                if (csrfIndex > 0) {
+                    int start = csrfIndex + "name=\"csrf\" value=\"".length();
+                    int end = html.indexOf("\"", start);
+                    if (end > start) {
+                        csrfToken = html.substring(start, end);
+                    }
                 }
             }
 
             if (csrfToken.isEmpty()) {
                 logger.warn("No se encontró token CSRF para comentario - ServiceId: {}", serviceId);
             } else {
-                logger.debug("Token CSRF obtenido para comentario");
+                logger.debug("Token CSRF obtenido para comentario: {}...", csrfToken.substring(0, Math.min(20, csrfToken.length())));
             }
 
             // Submit the comment form
@@ -979,6 +993,7 @@ public class WorkOrderService {
                         .data("submit", "Añadir comentario")
                         .header("Content-Type", "multipart/form-data")
                         .timeout(30000)
+                        .ignoreContentType(true)
                         .ignoreHttpErrors(true)
                         .execute();
             } else {
@@ -992,6 +1007,7 @@ public class WorkOrderService {
                         .data("serviceRemark[id]", "")
                         .data("submit", "Añadir comentario")
                         .timeout(15000)
+                        .ignoreContentType(true)
                         .ignoreHttpErrors(true)
                         .execute();
             }
