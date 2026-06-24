@@ -8,6 +8,8 @@ import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -17,6 +19,8 @@ import java.util.*;
 
 @Service
 public class WorkOrderService {
+
+    private static final Logger logger = LoggerFactory.getLogger(WorkOrderService.class);
 
     @Value("${ilac.base-url}")
     private String baseUrl;
@@ -32,8 +36,10 @@ public class WorkOrderService {
     private Document getPage(String url, String identity) throws IOException {
         Map<String, String> cookies = sessionService.getCookies(identity);
         if (cookies == null) {
+            logger.error("No hay sesión activa para usuario: {}", identity);
             throw new RuntimeException("Not logged in. Please login first.");
         }
+        logger.debug("Obteniendo página: {} para usuario: {}", url, identity);
         return Jsoup.connect(url)
                 .userAgent(USER_AGENT)
                 .cookies(cookies)
@@ -56,24 +62,35 @@ public class WorkOrderService {
      */
     public Map<String, List<WorkOrder>> getAllWorkOrders(String identity) {
         try {
+            logger.info("Obteniendo todas las órdenes de trabajo para usuario: {}", identity);
             Document doc = getPage(baseUrl, identity);
             Map<String, List<WorkOrder>> result = new HashMap<>();
 
             // Parse New/Pending work orders (pending-accordion) - "Nuevas ordenes de trabajo"
             List<WorkOrder> newOrders = parsePendingWorkOrders(doc);
             result.put("newWorkOrders", newOrders);
+            logger.debug("Órdenes nuevas encontradas: {}", newOrders.size());
 
             // Parse Team work orders (team-accordion)
             List<WorkOrder> teamOrders = parseWorkOrderSection(doc, "#team-accordion");
             result.put("teamWorkOrders", teamOrders);
+            logger.debug("Órdenes de equipo encontradas: {}", teamOrders.size());
 
             // Parse My work orders (work-orders-accordion)
             List<WorkOrder> myOrders = parseWorkOrderSection(doc, "#work-orders-accordion");
             result.put("myWorkOrders", myOrders);
+            logger.debug("Órdenes propias encontradas: {}", myOrders.size());
+
+            int totalTasks = newOrders.stream().mapToInt(wo -> wo.getTasks().size()).sum()
+                    + teamOrders.stream().mapToInt(wo -> wo.getTasks().size()).sum()
+                    + myOrders.stream().mapToInt(wo -> wo.getTasks().size()).sum();
+            logger.info("Total de órdenes: nuevas={}, equipo={}, propias={}, tareas totales={}", 
+                    newOrders.size(), teamOrders.size(), myOrders.size(), totalTasks);
 
             return result;
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Error al obtener órdenes de trabajo para usuario: {} - Error: {}", 
+                    identity, e.getMessage(), e);
             return Map.of(
                 "newWorkOrders", Collections.emptyList(),
                 "teamWorkOrders", Collections.emptyList(),
@@ -681,12 +698,16 @@ public class WorkOrderService {
      */
     public boolean markTaskAsCompleted(String taskId, String identity) {
         try {
+            logger.info("Marcando tarea como completada: {} - Usuario: {}", taskId, identity);
+            
             Map<String, String> cookies = sessionService.getCookies(identity);
             if (cookies == null) {
+                logger.error("No hay sesión activa para usuario: {}", identity);
                 throw new RuntimeException("Not logged in");
             }
 
             String taskUrl = baseUrl + "/engineer-task-detail-" + taskId;
+            logger.debug("Obteniendo página de tarea: {}", taskUrl);
 
             // Get the task detail page
             Document doc = Jsoup.connect(taskUrl)
@@ -711,15 +732,18 @@ public class WorkOrderService {
             }
 
             if (markDoneLink == null) {
+                logger.error("No se encontró el enlace 'Marcar como realizada' para tarea: {}", taskId);
                 throw new RuntimeException("Could not find 'Marcar como realizada' link");
             }
 
             String href = markDoneLink.attr("href");
             if (href.isEmpty()) {
+                logger.error("El enlace 'Marcar como realizada' no tiene href para tarea: {}", taskId);
                 throw new RuntimeException("Link has no href");
             }
 
             String fullUrl = href.startsWith("http") ? href : baseUrl + href;
+            logger.debug("URL de completar tarea: {}", fullUrl);
 
             // Click the link
             Connection.Response response = Jsoup.connect(fullUrl)
@@ -731,8 +755,15 @@ public class WorkOrderService {
                     .ignoreHttpErrors(true)
                     .execute();
 
-            return response.statusCode() == 200 || response.statusCode() == 302;
+            boolean success = response.statusCode() == 200 || response.statusCode() == 302;
+            if (success) {
+                logger.info("Tarea marcada como completada exitosamente: {} - Status: {}", taskId, response.statusCode());
+            } else {
+                logger.error("Error al marcar tarea como completada: {} - Status: {}", taskId, response.statusCode());
+            }
+            return success;
         } catch (Exception e) {
+            logger.error("Excepción al marcar tarea como completada: {} - Error: {}", taskId, e.getMessage(), e);
             e.printStackTrace();
             return false;
         }
@@ -747,13 +778,18 @@ public class WorkOrderService {
      */
     public boolean rejectTask(String taskId, String reason, String identity) {
         try {
+            logger.info("Rechazando tarea: {} - Usuario: {} - Razón: {}", taskId, identity, reason);
+            
             Map<String, String> cookies = sessionService.getCookies(identity);
             if (cookies == null) {
+                logger.error("No hay sesión activa para usuario: {}", identity);
                 throw new RuntimeException("Not logged in");
             }
 
             // Get the reject page to get the CSRF token
             String rejectUrl = baseUrl + "/jobs-reject-" + taskId;
+            logger.debug("Obteniendo página de rechazo: {}", rejectUrl);
+            
             Document doc = Jsoup.connect(rejectUrl)
                     .userAgent(USER_AGENT)
                     .cookies(cookies)
@@ -787,7 +823,14 @@ public class WorkOrderService {
                 }
             }
 
+            if (csrfToken.isEmpty()) {
+                logger.warn("No se encontró token CSRF para rechazo de tarea: {}", taskId);
+            } else {
+                logger.debug("Token CSRF obtenido para rechazo");
+            }
+
             // Submit the reject form
+            logger.debug("Enviando formulario de rechazo");
             Connection.Response response = Jsoup.connect(rejectUrl)
                     .method(Connection.Method.POST)
                     .userAgent(USER_AGENT)
@@ -800,8 +843,15 @@ public class WorkOrderService {
                     .ignoreHttpErrors(true)
                     .execute();
 
-            return response.statusCode() == 200 || response.statusCode() == 302;
+            boolean success = response.statusCode() == 200 || response.statusCode() == 302;
+            if (success) {
+                logger.info("Tarea rechazada exitosamente: {} - Status: {}", taskId, response.statusCode());
+            } else {
+                logger.error("Error al rechazar tarea: {} - Status: {}", taskId, response.statusCode());
+            }
+            return success;
         } catch (Exception e) {
+            logger.error("Excepción al rechazar tarea: {} - Error: {}", taskId, e.getMessage(), e);
             e.printStackTrace();
             return false;
         }
@@ -812,12 +862,16 @@ public class WorkOrderService {
      */
     public boolean acceptTask(String taskId, String identity) {
         try {
+            logger.info("Aceptando tarea: {} - Usuario: {}", taskId, identity);
+            
             Map<String, String> cookies = sessionService.getCookies(identity);
             if (cookies == null) {
+                logger.error("No hay sesión activa para usuario: {}", identity);
                 throw new RuntimeException("Not logged in");
             }
 
             String acceptUrl = baseUrl + "/jobs-accept-" + taskId;
+            logger.debug("URL de aceptación: {}", acceptUrl);
             
             Connection.Response response = Jsoup.connect(acceptUrl)
                     .method(Connection.Method.GET)
@@ -829,8 +883,15 @@ public class WorkOrderService {
                     .ignoreHttpErrors(true)
                     .execute();
 
-            return response.statusCode() == 200 || response.statusCode() == 302;
+            boolean success = response.statusCode() == 200 || response.statusCode() == 302;
+            if (success) {
+                logger.info("Tarea aceptada exitosamente: {} - Status: {}", taskId, response.statusCode());
+            } else {
+                logger.error("Error al aceptar tarea: {} - Status: {}", taskId, response.statusCode());
+            }
+            return success;
         } catch (Exception e) {
+            logger.error("Excepción al aceptar tarea: {} - Error: {}", taskId, e.getMessage(), e);
             e.printStackTrace();
             return false;
         }
@@ -865,13 +926,19 @@ public class WorkOrderService {
      */
     public boolean addCommentWithServiceId(String serviceId, String commentText, byte[] imageData, String imageName, String identity) {
         try {
+            logger.info("Agregando comentario - ServiceId: {} - Usuario: {} - Tiene imagen: {}", 
+                    serviceId, identity, imageData != null);
+            
             Map<String, String> cookies = sessionService.getCookies(identity);
             if (cookies == null) {
+                logger.error("No hay sesión activa para usuario: {}", identity);
                 throw new RuntimeException("Not logged in");
             }
 
             // Get the comment form page to get CSRF token
             String formUrl = baseUrl + "/service-remark-create-" + serviceId;
+            logger.debug("Obteniendo formulario de comentario: {}", formUrl);
+            
             Document doc = Jsoup.connect(formUrl)
                     .userAgent(USER_AGENT)
                     .cookies(cookies)
@@ -891,7 +958,14 @@ public class WorkOrderService {
                 }
             }
 
+            if (csrfToken.isEmpty()) {
+                logger.warn("No se encontró token CSRF para comentario - ServiceId: {}", serviceId);
+            } else {
+                logger.debug("Token CSRF obtenido para comentario");
+            }
+
             // Submit the comment form
+            logger.debug("Enviando formulario de comentario");
             Connection.Response response;
             if (imageData != null && imageName != null && !imageName.isEmpty()) {
                 // Submit with image using multipart
@@ -922,8 +996,18 @@ public class WorkOrderService {
                         .execute();
             }
 
-            return response.statusCode() == 200 || response.statusCode() == 302;
+            boolean success = response.statusCode() == 200 || response.statusCode() == 302;
+            if (success) {
+                logger.info("Comentario agregado exitosamente - ServiceId: {} - Status: {}", 
+                        serviceId, response.statusCode());
+            } else {
+                logger.error("Error al agregar comentario - ServiceId: {} - Status: {}", 
+                        serviceId, response.statusCode());
+            }
+            return success;
         } catch (Exception e) {
+            logger.error("Excepción al agregar comentario - ServiceId: {} - Error: {}", 
+                    serviceId, e.getMessage(), e);
             e.printStackTrace();
             return false;
         }

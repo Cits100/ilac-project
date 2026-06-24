@@ -6,6 +6,8 @@ import org.jsoup.Connection;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -15,6 +17,8 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class SessionService {
+
+    private static final Logger logger = LoggerFactory.getLogger(SessionService.class);
 
     @Value("${ilac.base-url}")
     private String baseUrl;
@@ -54,8 +58,10 @@ public class SessionService {
     public LoginResponse login(LoginRequest request) {
         try {
             String identity = request.getIdentity();
+            logger.info("Iniciando login para usuario: {}", identity);
 
             // Step 1: Fetch login page to get CSRF token
+            logger.debug("Obteniendo página de login de: {}", baseUrl);
             Connection.Response loginPageResponse = Jsoup.connect(baseUrl)
                     .method(Connection.Method.GET)
                     .userAgent(USER_AGENT)
@@ -65,16 +71,19 @@ public class SessionService {
 
             Document loginPage = loginPageResponse.parse();
             Map<String, String> cookies = new ConcurrentHashMap<>(loginPageResponse.cookies());
+            logger.debug("Cookies obtenidas de página de login: {}", cookies.keySet());
 
             // Extract CSRF token
             Element csrfElement = loginPage.select("input[name=csrf]").first();
             if (csrfElement == null) {
+                logger.error("No se encontró token CSRF en la página de login");
                 return LoginResponse.builder()
                         .success(false)
                         .message("No se pudo encontrar el token CSRF en la página de inicio de sesión")
                         .build();
             }
             String csrfToken = csrfElement.val();
+            logger.debug("Token CSRF obtenido: {}...", csrfToken.substring(0, Math.min(20, csrfToken.length())));
 
             // Step 2: POST login credentials
             Map<String, String> formData = Map.of(
@@ -84,6 +93,7 @@ public class SessionService {
                     "submit", ""
             );
 
+            logger.debug("Enviando credenciales a: {}", baseUrl);
             Connection.Response loginResponse = null;
             try {
                 loginResponse = Jsoup.connect(baseUrl)
@@ -95,8 +105,10 @@ public class SessionService {
                         .timeout(15000)
                         .ignoreHttpErrors(true)
                         .execute();
+                
+                logger.debug("Respuesta de login - Status: {}", loginResponse.statusCode());
             } catch (IOException e) {
-                // Continue to verify login status
+                logger.warn("Error en POST de login (continuando verificación): {}", e.getMessage());
             }
 
             // Merge cookies
@@ -105,6 +117,7 @@ public class SessionService {
             }
 
             // Step 3: Navigate to home page to check login status
+            logger.debug("Verificando estado de login en página principal");
             Connection.Response homeResponse = Jsoup.connect(baseUrl)
                     .method(Connection.Method.GET)
                     .userAgent(USER_AGENT)
@@ -120,6 +133,7 @@ public class SessionService {
             boolean hasLoginForm = homePage.select("#login-form").size() > 0;
 
             if (hasLoginForm) {
+                logger.warn("Login fallido para usuario: {} - Credenciales inválidas", identity);
                 return LoginResponse.builder()
                         .success(false)
                         .message("Falló inicio de sesión: Credenciales inválidas")
@@ -129,9 +143,11 @@ public class SessionService {
             // Store session for this user
             UserSession session = new UserSession(identity, cookies);
             userSessions.put(identity, session);
+            logger.info("Login exitoso para usuario: {} - Sesión almacenada", identity);
 
             // Extract user data
             Map<String, String> userData = extractUserData(homePage);
+            logger.debug("Datos de usuario extraídos: {}", userData.keySet());
 
             return LoginResponse.builder()
                     .success(true)
@@ -140,6 +156,8 @@ public class SessionService {
                     .build();
 
         } catch (IOException e) {
+            logger.error("Error durante el inicio de sesión para usuario: {} - Error: {}", 
+                    request.getIdentity(), e.getMessage(), e);
             return LoginResponse.builder()
                     .success(false)
                     .message("Error durante el inicio de sesión: " + e.getMessage())
@@ -153,6 +171,7 @@ public class SessionService {
     public UserSession getSession(String identity) {
         UserSession session = userSessions.get(identity);
         if (session != null && session.isExpired()) {
+            logger.info("Sesión expirada para usuario: {}", identity);
             userSessions.remove(identity);
             return null;
         }
@@ -164,6 +183,9 @@ public class SessionService {
      */
     public Map<String, String> getCookies(String identity) {
         UserSession session = getSession(identity);
+        if (session == null) {
+            logger.debug("No se encontró sesión activa para usuario: {}", identity);
+        }
         return session != null ? session.getCookies() : null;
     }
 
@@ -178,6 +200,7 @@ public class SessionService {
      * Remove session for a user
      */
     public void logout(String identity) {
+        logger.info("Cerrando sesión para usuario: {}", identity);
         userSessions.remove(identity);
     }
 
