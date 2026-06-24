@@ -14,6 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.util.*;
 
@@ -997,7 +998,8 @@ public class WorkOrderService {
             logger.debug("Enviando formulario de comentario");
             Connection.Response response;
             if (imageData != null && imageName != null && !imageName.isEmpty()) {
-                // Submit with image using multipart
+                // Submit with image using multipart and InputStream
+                logger.debug("Enviando con imagen: {} ({} bytes)", imageName, imageData.length);
                 response = Jsoup.connect(formUrl)
                         .method(Connection.Method.POST)
                         .userAgent(USER_AGENT)
@@ -1005,6 +1007,7 @@ public class WorkOrderService {
                         .data("csrf", csrfToken)
                         .data("serviceRemark[text]", commentText)
                         .data("serviceRemark[id]", "")
+                        .data("serviceRemark[file][fileInfo]", imageName, new ByteArrayInputStream(imageData))
                         .data("submit", "Añadir comentario")
                         .header("Content-Type", "multipart/form-data")
                         .timeout(30000)
