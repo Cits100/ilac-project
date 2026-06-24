@@ -56,8 +56,12 @@ class WorkOrder {
   }
 
   factory WorkOrder.fromMap(Map<String, dynamic> map, List<Task> tasks) {
+    // Extract original ID from composite key (remove _new, _team, _personal suffix)
+    String compositeId = map['id'] ?? '';
+    String originalId = compositeId.replaceAll(RegExp(r'_(new|team|personal)$'), '');
+    
     return WorkOrder(
-      id: map['id'],
+      id: originalId,
       title: map['title'],
       tag: map['tag'],
       dueDate: map['dueDate'],

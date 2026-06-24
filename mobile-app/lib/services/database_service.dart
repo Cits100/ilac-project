@@ -19,7 +19,7 @@ class DatabaseService {
     String path = join(await getDatabasesPath(), 'ilac_app.db');
     return await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -36,6 +36,12 @@ class DatabaseService {
       await db.execute('ALTER TABLE work_orders ADD COLUMN rejectTagUrl TEXT');
       await db.execute('ALTER TABLE tasks ADD COLUMN acceptUrl TEXT');
       await db.execute('ALTER TABLE tasks ADD COLUMN rejectUrl TEXT');
+    }
+    if (oldVersion < 3) {
+      // Clear old data since ID format changed to composite key
+      await db.delete('task_details');
+      await db.delete('tasks');
+      await db.delete('work_orders');
     }
   }
 
@@ -125,16 +131,18 @@ class DatabaseService {
     final batch = db.batch();
     
     for (var order in orders) {
+      // Use composite key: id_type to handle same ID in different categories
+      String compositeId = '${order.id}_${order.type}';
       batch.insert(
         'work_orders',
-        order.toMap(),
+        {...order.toMap(), 'id': compositeId},
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
       
       for (var task in order.tasks) {
         batch.insert(
           'tasks',
-          {...task.toMap(), 'workOrderId': order.id},
+          {...task.toMap(), 'workOrderId': compositeId},
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
         
@@ -153,10 +161,11 @@ class DatabaseService {
 
   Future<List<WorkOrder>> getWorkOrders(String type) async {
     final db = await database;
+    // Query by composite key suffix (e.g., '%_new', '%_team', '%_personal')
     final List<Map<String, dynamic>> orderMaps = await db.query(
       'work_orders',
-      where: 'type = ?',
-      whereArgs: [type],
+      where: "id LIKE ?",
+      whereArgs: ['%_$type'],
     );
 
     List<WorkOrder> orders = [];

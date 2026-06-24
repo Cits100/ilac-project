@@ -209,7 +209,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                   // Team Work Orders
                   _buildSection(
-                    title: 'Órdenes de Trabajo del Equipo',
+                    title: 'Órdenes de Trabajo de Equipo',
                     icon: Icons.group,
                     count: _teamOrders.fold(0, (sum, wo) => sum + wo.tasks.length),
                     orders: _teamOrders,
