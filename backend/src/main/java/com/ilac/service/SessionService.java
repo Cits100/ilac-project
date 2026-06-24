@@ -71,7 +71,7 @@ public class SessionService {
             if (csrfElement == null) {
                 return LoginResponse.builder()
                         .success(false)
-                        .message("Could not find CSRF token on login page")
+                        .message("No se pudo encontrar el token CSRF en la página de inicio de sesión")
                         .build();
             }
             String csrfToken = csrfElement.val();
@@ -122,7 +122,7 @@ public class SessionService {
             if (hasLoginForm) {
                 return LoginResponse.builder()
                         .success(false)
-                        .message("Login failed: Invalid credentials")
+                        .message("Falló inicio de sesión: Credenciales inválidas")
                         .build();
             }
 
@@ -135,14 +135,14 @@ public class SessionService {
 
             return LoginResponse.builder()
                     .success(true)
-                    .message("Login successful")
+                    .message("Inicio de sesión exitoso")
                     .userData(userData)
                     .build();
 
         } catch (IOException e) {
             return LoginResponse.builder()
                     .success(false)
-                    .message("Error during login: " + e.getMessage())
+                    .message("Error durante el inicio de sesión: " + e.getMessage())
                     .build();
         }
     }

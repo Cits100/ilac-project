@@ -32,9 +32,7 @@ public class IlacController {
         LoginResponse loginResult = sessionService.login(request);
         
         if (!loginResult.isSuccess()) {
-            int status = loginResult.getMessage() != null
-                    && loginResult.getMessage().contains("Invalid credentials") ? 401 : 503;
-            return ResponseEntity.status(status).body(FullDashboardResponse.builder()
+            return ResponseEntity.status(401).body(FullDashboardResponse.builder()
                     .success(false)
                     .message(loginResult.getMessage())
                     .build());
@@ -45,7 +43,7 @@ public class IlacController {
 
             return ResponseEntity.ok(FullDashboardResponse.builder()
                     .success(true)
-                    .message("Login successful")
+                    .message("Inicio de sesión exitoso")
                     .userName(loginResult.getUserData() != null ? 
                             loginResult.getUserData().getOrDefault("userInfo", request.getIdentity()) : 
                             request.getIdentity())
@@ -54,7 +52,7 @@ public class IlacController {
         } catch (Exception e) {
             return ResponseEntity.ok(FullDashboardResponse.builder()
                     .success(true)
-                    .message("Login successful but error fetching work orders: " + e.getMessage())
+                    .message("Inicio de sesión exitoso, pero error al obtener órdenes: " + e.getMessage())
                     .userName(request.getIdentity())
                     .workOrders(Map.of(
                         "newWorkOrders", List.of(),
@@ -77,7 +75,7 @@ public class IlacController {
         if (!loginResult.isSuccess()) {
             return ResponseEntity.status(401).body(Map.of(
                     "success", false,
-                    "message", "Login failed: " + loginResult.getMessage()
+                    "message", "Falló inicio de sesión: " + loginResult.getMessage()
             ));
         }
 
@@ -86,7 +84,7 @@ public class IlacController {
         if (serviceId == null) {
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
-                    "message", "Could not find service ID for task"
+                    "message", "No se pudo encontrar el ID de servicio para la tarea"
             ));
         }
 
@@ -96,11 +94,11 @@ public class IlacController {
         if (request.getImageBase64() != null && !request.getImageBase64().isEmpty()) {
             try {
                 imageData = Base64.getDecoder().decode(request.getImageBase64());
-                imageName = request.getImageName() != null ? request.getImageName() : "image.jpg";
+                imageName = request.getImageName() != null ? request.getImageName() : "imagen.jpg";
             } catch (Exception e) {
                 return ResponseEntity.badRequest().body(Map.of(
                         "success", false,
-                        "message", "Invalid base64 image data"
+                        "message", "Datos de imagen base64 inválidos"
                 ));
             }
         }
@@ -116,12 +114,12 @@ public class IlacController {
         if (result) {
             return ResponseEntity.ok(Map.of(
                     "success", true,
-                    "message", "Comment added successfully"
+                    "message", "Comentario agregado exitosamente"
             ));
         } else {
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
-                    "message", "Failed to add comment"
+                    "message", "Error al agregar comentario"
             ));
         }
     }
@@ -138,7 +136,7 @@ public class IlacController {
         if (!loginResult.isSuccess()) {
             return ResponseEntity.status(401).body(Map.of(
                     "success", false,
-                    "message", "Login failed: " + loginResult.getMessage()
+                    "message", "Falló inicio de sesión: " + loginResult.getMessage()
             ));
         }
 
@@ -147,12 +145,12 @@ public class IlacController {
         if (result) {
             return ResponseEntity.ok(Map.of(
                     "success", true,
-                    "message", "Task marked as completed"
+                    "message", "Tarea marcada como completada"
             ));
         } else {
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
-                    "message", "Failed to mark task as completed"
+                    "message", "Error al marcar tarea como completada"
             ));
         }
     }
@@ -170,7 +168,7 @@ public class IlacController {
         if (!loginResult.isSuccess()) {
             return ResponseEntity.status(401).body(Map.of(
                     "success", false,
-                    "message", "Login failed: " + loginResult.getMessage()
+                    "message", "Falló inicio de sesión: " + loginResult.getMessage()
             ));
         }
 
@@ -183,12 +181,12 @@ public class IlacController {
         if (result) {
             return ResponseEntity.ok(Map.of(
                     "success", true,
-                    "message", "Task rejected successfully"
+                    "message", "Tarea rechazada exitosamente"
             ));
         } else {
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
-                    "message", "Failed to reject task"
+                    "message", "Error al rechazar tarea"
             ));
         }
     }
@@ -206,7 +204,7 @@ public class IlacController {
         if (!loginResult.isSuccess()) {
             return ResponseEntity.status(401).body(Map.of(
                     "success", false,
-                    "message", "Login failed: " + loginResult.getMessage()
+                    "message", "Falló inicio de sesión: " + loginResult.getMessage()
             ));
         }
 
@@ -215,12 +213,12 @@ public class IlacController {
         if (result) {
             return ResponseEntity.ok(Map.of(
                     "success", true,
-                    "message", "Task accepted successfully"
+                    "message", "Tarea aceptada exitosamente"
             ));
         } else {
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
-                    "message", "Failed to accept task"
+                    "message", "Error al aceptar tarea"
             ));
         }
     }
