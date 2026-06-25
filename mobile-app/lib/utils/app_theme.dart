@@ -40,10 +40,11 @@ class AppTheme {
         centerTitle: true,
       ),
       cardColor: darkGrey,
-      cardTheme: const CardTheme(
+      cardTheme: CardThemeData(
+        color: darkGrey,
         elevation: 2,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.all(Radius.circular(12)),
+          borderRadius: BorderRadius.circular(12),
         ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
