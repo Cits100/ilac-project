@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../utils/app_theme.dart';
 import '../../models/work_order.dart';
+import '../../models/task_comment.dart';
 import '../../services/auth_service.dart';
 import '../../services/connectivity_service.dart';
 
@@ -34,12 +35,43 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   bool _isCompleting = false;
   bool _isRejecting = false;
   bool _isAccepting = false;
+  bool _isLoadingComments = false;
+  List<TaskComment> _comments = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadComments();
+  }
 
   @override
   void dispose() {
     _commentController.dispose();
     _rejectReasonController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadComments() async {
+    setState(() {
+      _isLoadingComments = true;
+    });
+
+    try {
+      final result = await _authService.getTaskComments(widget.task.id);
+      if (result['success'] == true && result['comments'] != null) {
+        setState(() {
+          _comments = (result['comments'] as List)
+              .map((c) => TaskComment.fromJson(c))
+              .toList();
+        });
+      }
+    } catch (e) {
+      // Error loading comments - silent fail
+    } finally {
+      setState(() {
+        _isLoadingComments = false;
+      });
+    }
   }
 
   Future<void> _pickImage() async {
@@ -770,6 +802,134 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 fontSize: 14,
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCommentCard(TaskComment comment) {
+    final currentUser = _authService.currentIdentity ?? '';
+    final isOwnComment = comment.author.isNotEmpty && 
+        (comment.author.toLowerCase().contains(currentUser.split('@').first.toLowerCase()) ||
+         currentUser.toLowerCase().contains(comment.author.toLowerCase()));
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.darkGrey.withOpacity(0.5),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.grey.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.person, size: 16, color: AppTheme.lightGrey),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  comment.author,
+                  style: const TextStyle(
+                    color: AppTheme.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+              if (comment.date.isNotEmpty)
+                Text(
+                  comment.date,
+                  style: const TextStyle(color: AppTheme.grey, fontSize: 11),
+                ),
+              if (isOwnComment && comment.id.isNotEmpty)
+                IconButton(
+                  icon: const Icon(Icons.edit, size: 18, color: AppTheme.primaryRed),
+                  onPressed: () => _editComment(comment),
+                  tooltip: 'Editar',
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (comment.text.isNotEmpty)
+            Text(
+              comment.text,
+              style: const TextStyle(color: AppTheme.lightGrey, fontSize: 14),
+            ),
+          if (comment.imageUrl.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Container(
+              height: 80,
+              width: 80,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: AppTheme.darkGrey,
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.network(
+                  comment.imageUrl,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) {
+                    return const Center(
+                      child: Icon(Icons.broken_image, color: AppTheme.grey, size: 32),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  void _editComment(TaskComment comment) {
+    final editController = TextEditingController(text: comment.text);
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.darkGrey,
+        title: const Text('Editar Comentario', style: TextStyle(color: AppTheme.white)),
+        content: TextField(
+          controller: editController,
+          maxLines: 5,
+          decoration: const InputDecoration(
+            hintText: 'Escriba su comentario...',
+            hintStyle: TextStyle(color: AppTheme.grey),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () async {
+              if (editController.text.trim().isEmpty) return;
+              Navigator.pop(context);
+              
+              final result = await _authService.editComment(
+                comment.id,
+                editController.text.trim(),
+              );
+              
+              if (result['success'] == true) {
+                _loadComments();
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Comentario editado exitosamente'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              }
+            },
+            child: const Text('Guardar', style: TextStyle(color: AppTheme.primaryRed)),
           ),
         ],
       ),
