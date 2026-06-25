@@ -5,80 +5,67 @@ import com.ilac.model.WorkOrder;
 import com.ilac.model.Task;
 import com.ilac.model.TaskComment;
 import org.jsoup.Connection;
-import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
+/**
+ * Servicio de lógica de negocio para órdenes de trabajo.
+ * 
+ * Responsabilidades:
+ * - Obtener y parsear órdenes de trabajo (nuevas, equipo, propias)
+ * - Obtener y parsear tareas
+ * - Obtener y parsear comentarios
+ * - Agregar/editar comentarios
+ * - Marcar tareas como completadas
+ * - Aceptar/rechazar tareas
+ * 
+ * NOTA: No maneja comunicación HTTP directamente - usa IlacClient
+ */
 @Service
 public class WorkOrderService {
 
     private static final Logger logger = LoggerFactory.getLogger(WorkOrderService.class);
 
-    @Value("${ilac.base-url}")
-    private String baseUrl;
+    @Autowired
+    private IlacClient ilacClient;
 
     @Autowired
     private SessionService sessionService;
 
-    private static final String USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    // ==================== MÉTODOS PÚBLICOS ====================
 
     /**
-     * Get authenticated page for a specific user
-     */
-    private Document getPage(String url, String identity) throws IOException {
-        Map<String, String> cookies = sessionService.getCookiesByIdentity(identity);
-        if (cookies == null) {
-            logger.error("No hay sesión activa para usuario: {}", identity);
-            throw new RuntimeException("Not logged in. Please login first.");
-        }
-        logger.debug("Obteniendo página: {} para usuario: {}", url, identity);
-        return Jsoup.connect(url)
-                .userAgent(USER_AGENT)
-                .cookies(cookies)
-                .timeout(15000)
-                .ignoreContentType(true)
-                .get();
-    }
-
-    /**
-     * Get raw HTML of a page for debugging
-     */
-    public String getRawHtml(String path, String identity) throws IOException {
-        String url = path.startsWith("http") ? path : baseUrl + path;
-        Document doc = getPage(url, identity);
-        return doc.html();
-    }
-
-    /**
-     * Scrape all work orders (Team, My work orders, and New/pending orders)
+     * Obtener todas las órdenes de trabajo (nuevas, equipo, propias)
      */
     public Map<String, List<WorkOrder>> getAllWorkOrders(String identity) {
         try {
             logger.info("Obteniendo todas las órdenes de trabajo para usuario: {}", identity);
-            Document doc = getPage(baseUrl, identity);
+            Map<String, String> cookies = getCookiesForUser(identity);
+            Document doc = ilacClient.getPage(ilacClient.getBaseUrl(), cookies);
+
             Map<String, List<WorkOrder>> result = new HashMap<>();
 
-            // Parse New/Pending work orders (pending-accordion) - "Nuevas ordenes de trabajo"
+            // Parsear órdenes nuevas (pending-accordion)
             List<WorkOrder> newOrders = parsePendingWorkOrders(doc);
             result.put("newWorkOrders", newOrders);
             logger.debug("Órdenes nuevas encontradas: {}", newOrders.size());
 
-            // Parse Team work orders (team-accordion)
+            // Parsear órdenes de equipo (team-accordion)
             List<WorkOrder> teamOrders = parseWorkOrderSection(doc, "#team-accordion");
             result.put("teamWorkOrders", teamOrders);
             logger.debug("Órdenes de equipo encontradas: {}", teamOrders.size());
 
-            // Parse My work orders (work-orders-accordion)
+            // Parsear órdenes propias (work-orders-accordion)
             List<WorkOrder> myOrders = parseWorkOrderSection(doc, "#work-orders-accordion");
             result.put("myWorkOrders", myOrders);
             logger.debug("Órdenes propias encontradas: {}", myOrders.size());
@@ -86,24 +73,437 @@ public class WorkOrderService {
             int totalTasks = newOrders.stream().mapToInt(wo -> wo.getTasks().size()).sum()
                     + teamOrders.stream().mapToInt(wo -> wo.getTasks().size()).sum()
                     + myOrders.stream().mapToInt(wo -> wo.getTasks().size()).sum();
-            logger.info("Total de órdenes: nuevas={}, equipo={}, propias={}, tareas totales={}", 
+            logger.info("Total: nuevas={}, equipo={}, propias={}, tareas={}",
                     newOrders.size(), teamOrders.size(), myOrders.size(), totalTasks);
 
             return result;
         } catch (Exception e) {
-            logger.error("Error al obtener órdenes de trabajo para usuario: {} - Error: {}", 
-                    identity, e.getMessage(), e);
+            logger.error("Error al obtener órdenes: {} - Error: {}", identity, e.getMessage(), e);
             return Map.of(
-                "newWorkOrders", Collections.emptyList(),
-                "teamWorkOrders", Collections.emptyList(),
-                "myWorkOrders", Collections.emptyList()
+                    "newWorkOrders", Collections.emptyList(),
+                    "teamWorkOrders", Collections.emptyList(),
+                    "myWorkOrders", Collections.emptyList()
             );
         }
     }
 
     /**
-     * Parse pending/new work orders from pending-accordion
-     * These have different structure with Accept/Reject buttons
+     * Obtener todas las órdenes con detalles de tareas
+     */
+    public Map<String, List<WorkOrder>> getFullWorkOrders(String identity) {
+        Map<String, List<WorkOrder>> allOrders = getAllWorkOrders(identity);
+
+        // Enriquecer órdenes de equipo
+        for (WorkOrder wo : allOrders.getOrDefault("teamWorkOrders", Collections.emptyList())) {
+            enrichWorkOrderWithDetails(wo, identity);
+        }
+
+        // Enriquecer órdenes propias
+        for (WorkOrder wo : allOrders.getOrDefault("myWorkOrders", Collections.emptyList())) {
+            enrichWorkOrderWithDetails(wo, identity);
+        }
+
+        return allOrders;
+    }
+
+    /**
+     * Obtener comentarios de una tarea
+     */
+    public List<TaskComment> getTaskComments(String taskId, String identity) {
+        try {
+            logger.info("Obteniendo comentarios para tarea: {} - Usuario: {}", taskId, identity);
+            Map<String, String> cookies = getCookiesForUser(identity);
+            String taskUrl = ilacClient.buildUrl("/engineer-task-detail-" + taskId);
+            Document doc = ilacClient.getPage(taskUrl, cookies);
+
+            List<TaskComment> comments = new ArrayList<>();
+
+            // Buscar sección de comentarios
+            Element commentList = doc.selectFirst("#comment-list");
+            if (commentList == null) {
+                logger.debug("No se encontró lista de comentarios");
+                return comments;
+            }
+
+            // Parsear cada comentario
+            Elements commentElements = commentList.select(".well.well-sm");
+            for (Element commentEl : commentElements) {
+                TaskComment comment = parseCommentElement(commentEl);
+                if (comment != null) {
+                    comments.add(comment);
+                }
+            }
+
+            logger.info("Comentarios encontrados: {} - Tarea: {}", comments.size(), taskId);
+            return comments;
+        } catch (Exception e) {
+            logger.error("Error al obtener comentarios: {} - Error: {}", taskId, e.getMessage(), e);
+            return new ArrayList<>();
+        }
+    }
+
+    /**
+     * Obtener service ID para comentarios
+     */
+    public String getServiceId(String taskId, String identity) {
+        try {
+            Map<String, String> cookies = getCookiesForUser(identity);
+            String taskUrl = ilacClient.buildUrl("/engineer-task-detail-" + taskId);
+            Document doc = ilacClient.getPage(taskUrl, cookies);
+
+            Element commentLink = doc.selectFirst("a[href*=service-remark-create]");
+            if (commentLink != null) {
+                String href = commentLink.attr("href");
+                return href.replace("/service-remark-create-", "").trim();
+            }
+
+            return null;
+        } catch (Exception e) {
+            logger.error("Error al obtener serviceId: {} - Error: {}", taskId, e.getMessage(), e);
+            return null;
+        }
+    }
+
+    /**
+     * Agregar comentario a una tarea
+     */
+    public boolean addCommentWithServiceId(String serviceId, String commentText,
+                                            byte[] imageData, String imageName, String identity) {
+        try {
+            logger.info("Agregando comentario - ServiceId: {} - Usuario: {} - Imagen: {}",
+                    serviceId, identity, imageData != null);
+
+            Map<String, String> cookies = getCookiesForUser(identity);
+            String formUrl = ilacClient.buildUrl("/service-remark-create-" + serviceId);
+
+            // Obtener formulario para CSRF token
+            Document doc = ilacClient.getPage(formUrl, cookies);
+            String html = doc.html();
+            String csrfToken = ilacClient.extractCsrfTokenFromJson(html);
+
+            if (csrfToken == null || csrfToken.isEmpty()) {
+                logger.warn("No se encontró token CSRF para comentario - ServiceId: {}", serviceId);
+                csrfToken = "";
+            }
+
+            // Preparar datos del formulario
+            Map<String, String> formData = new HashMap<>();
+            formData.put("csrf", csrfToken);
+            formData.put("serviceRemark[text]", commentText);
+            formData.put("serviceRemark[id]", "");
+            formData.put("submit", "Añadir comentario");
+
+            // Enviar formulario
+            Connection.Response response;
+            if (imageData != null && imageName != null && !imageName.isEmpty()) {
+                response = ilacClient.postFormWithFile(formUrl, cookies, formData,
+                        "serviceRemark[file][fileInfo]", imageName, imageData);
+            } else {
+                response = ilacClient.postForm(formUrl, cookies, formData);
+            }
+
+            boolean success = response.statusCode() == 200 || response.statusCode() == 302;
+            if (success) {
+                logger.info("Comentario agregado - ServiceId: {} - Status: {}", serviceId, response.statusCode());
+            } else {
+                logger.error("Error al agregar comentario - ServiceId: {} - Status: {}", serviceId, response.statusCode());
+            }
+            return success;
+        } catch (Exception e) {
+            logger.error("Excepción al agregar comentario: {} - Error: {}", serviceId, e.getMessage(), e);
+            return false;
+        }
+    }
+
+    /**
+     * Editar un comentario existente
+     */
+    public boolean editComment(String commentId, String newText, String identity) {
+        try {
+            logger.info("Editando comentario: {} - Usuario: {}", commentId, identity);
+
+            Map<String, String> cookies = getCookiesForUser(identity);
+            String editUrl = ilacClient.buildUrl("/service-remark-edit-" + commentId);
+
+            // Obtener página de edición para CSRF token
+            Document doc = ilacClient.getPage(editUrl, cookies);
+            String html = doc.html();
+            String csrfToken = ilacClient.extractCsrfTokenFromJson(html);
+
+            if (csrfToken == null || csrfToken.isEmpty()) {
+                logger.warn("No se encontró token CSRF para edición: {}", commentId);
+                csrfToken = "";
+            }
+
+            // Enviar formulario
+            Map<String, String> formData = Map.of(
+                    "csrf", csrfToken,
+                    "serviceRemark[text]", newText,
+                    "serviceRemark[id]", commentId,
+                    "submit", "Guardar"
+            );
+
+            Connection.Response response = ilacClient.postForm(editUrl, cookies, formData);
+
+            boolean success = response.statusCode() == 200 || response.statusCode() == 302;
+            if (success) {
+                logger.info("Comentario editado: {} - Status: {}", commentId, response.statusCode());
+            } else {
+                logger.error("Error al editar comentario: {} - Status: {}", commentId, response.statusCode());
+            }
+            return success;
+        } catch (Exception e) {
+            logger.error("Excepción al editar comentario: {} - Error: {}", commentId, e.getMessage(), e);
+            return false;
+        }
+    }
+
+    /**
+     * Marcar tarea como completada
+     */
+    public boolean markTaskAsCompleted(String taskId, String identity) {
+        try {
+            logger.info("Marcando tarea como completada: {} - Usuario: {}", taskId, identity);
+
+            Map<String, String> cookies = getCookiesForUser(identity);
+            String taskUrl = ilacClient.buildUrl("/engineer-task-detail-" + taskId);
+
+            // Obtener página de tarea
+            Document doc = ilacClient.getPage(taskUrl, cookies);
+
+            // Buscar enlace "Marcar como realizada" con data-values
+            Element markDoneLink = findMarkDoneLink(doc, taskId);
+
+            if (markDoneLink == null) {
+                logger.error("No se encontró enlace 'Marcar como realizada' para tarea: {}", taskId);
+                return false;
+            }
+
+            String href = markDoneLink.attr("href");
+            String fullUrl = ilacClient.buildUrl(href);
+
+            // Obtener CSRF token
+            String csrfToken = ilacClient.extractCsrfToken(doc);
+            if (csrfToken == null) csrfToken = "";
+
+            // Enviar POST con taskId
+            Map<String, String> formData = Map.of(
+                    "job", taskId,
+                    "csrf", csrfToken
+            );
+
+            Connection.Response response = ilacClient.postForm(fullUrl, cookies, formData);
+
+            boolean success = response.statusCode() == 200 || response.statusCode() == 302;
+            if (success) {
+                logger.info("Tarea completada: {} - Status: {}", taskId, response.statusCode());
+            } else {
+                logger.error("Error al completar tarea: {} - Status: {}", taskId, response.statusCode());
+            }
+            return success;
+        } catch (Exception e) {
+            logger.error("Excepción al completar tarea: {} - Error: {}", taskId, e.getMessage(), e);
+            return false;
+        }
+    }
+
+    /**
+     * Aceptar tarea
+     */
+    public boolean acceptTask(String taskId, String identity) {
+        try {
+            logger.info("Aceptando tarea: {} - Usuario: {}", taskId, identity);
+
+            Map<String, String> cookies = getCookiesForUser(identity);
+            String acceptUrl = ilacClient.buildUrl("/jobs-accept-" + taskId);
+
+            Connection.Response response = ilacClient.postForm(acceptUrl, cookies, Map.of());
+
+            boolean success = response.statusCode() == 200 || response.statusCode() == 302;
+            if (success) {
+                logger.info("Tarea aceptada: {} - Status: {}", taskId, response.statusCode());
+            } else {
+                logger.error("Error al aceptar tarea: {} - Status: {}", taskId, response.statusCode());
+            }
+            return success;
+        } catch (Exception e) {
+            logger.error("Excepción al aceptar tarea: {} - Error: {}", taskId, e.getMessage(), e);
+            return false;
+        }
+    }
+
+    /**
+     * Rechazar tarea con razón
+     */
+    public boolean rejectTask(String taskId, String reason, String identity) {
+        try {
+            logger.info("Rechazando tarea: {} - Usuario: {} - Razón: {}", taskId, identity, reason);
+
+            Map<String, String> cookies = getCookiesForUser(identity);
+            String rejectUrl = ilacClient.buildUrl("/jobs-reject-" + taskId);
+
+            // Obtener página para CSRF token
+            Document doc = ilacClient.getPage(rejectUrl, cookies);
+            String html = doc.html();
+            String csrfToken = ilacClient.extractCsrfTokenFromJson(html);
+
+            if (csrfToken == null || csrfToken.isEmpty()) {
+                logger.warn("No se encontró token CSRF para rechazo: {}", taskId);
+                csrfToken = "";
+            }
+
+            // Enviar formulario
+            Map<String, String> formData = Map.of(
+                    "description", reason,
+                    "csrf", csrfToken,
+                    "submit", "Guardar"
+            );
+
+            Connection.Response response = ilacClient.postForm(rejectUrl, cookies, formData);
+
+            boolean success = response.statusCode() == 200 || response.statusCode() == 302;
+            if (success) {
+                logger.info("Tarea rechazada: {} - Status: {}", taskId, response.statusCode());
+            } else {
+                logger.error("Error al rechazar tarea: {} - Status: {}", taskId, response.statusCode());
+            }
+            return success;
+        } catch (Exception e) {
+            logger.error("Excepción al rechazar tarea: {} - Error: {}", taskId, e.getMessage(), e);
+            return false;
+        }
+    }
+
+    // ==================== MÉTODOS PRIVADOS ====================
+
+    /**
+     * Obtener cookies para un usuario
+     */
+    private Map<String, String> getCookiesForUser(String identity) {
+        Map<String, String> cookies = sessionService.getCookiesByIdentity(identity);
+        if (cookies == null) {
+            logger.error("No hay sesión activa para usuario: {}", identity);
+            throw new RuntimeException("No hay sesión activa. Inicie sesión primero.");
+        }
+        return cookies;
+    }
+
+    /**
+     * Enriquecer orden de trabajo con detalles de tareas
+     */
+    private void enrichWorkOrderWithDetails(WorkOrder wo, String identity) {
+        if (wo.getTasks() != null) {
+            for (Task task : wo.getTasks()) {
+                if (task.getDetailUrl() != null && !task.getDetailUrl().isEmpty()) {
+                    TaskDetail detail = getTaskDetail(task.getDetailUrl(), identity);
+                    task.setDetail(detail);
+                }
+            }
+        }
+    }
+
+    /**
+     * Obtener detalle de una tarea
+     */
+    private TaskDetail getTaskDetail(String taskUrl, String identity) {
+        try {
+            Map<String, String> cookies = getCookiesForUser(identity);
+            String fullUrl = ilacClient.buildUrl(taskUrl);
+            Document doc = ilacClient.getPage(fullUrl, cookies);
+
+            TaskDetail detail = new TaskDetail();
+
+            // Parsear tabla de detalles
+            Element table = doc.selectFirst("#task-detail-maintenance-point table");
+            if (table != null) {
+                parseDetailTable(table, detail);
+            }
+
+            // Parsear tipo de tarea y modo de aplicación
+            Element taskTypeEl = doc.selectFirst(".task-detail-task-name p");
+            detail.setTaskType(taskTypeEl != null ? taskTypeEl.text().trim() : "");
+
+            Element appModeEl = doc.selectFirst(".task-detail-tool-info p");
+            detail.setApplicationMode(appModeEl != null ? appModeEl.text().trim() : "");
+
+            // Parsear producto
+            Element productNameEl = doc.selectFirst(".task-detail-product-info span");
+            detail.setProductName(productNameEl != null ? productNameEl.text().trim() : "");
+
+            Element volumeEl = doc.selectFirst(".task-detail-product-info p:nth-child(3)");
+            detail.setProductVolume(volumeEl != null ? volumeEl.text().trim() : "");
+
+            // Listas vacías para imágenes (no se usan)
+            detail.setImages(Collections.emptyList());
+            detail.setToolImages(Collections.emptyList());
+            detail.setProductImages(Collections.emptyList());
+            detail.setSafetyIcons(Collections.emptyList());
+
+            return detail;
+        } catch (Exception e) {
+            logger.error("Error al obtener detalle: {} - Error: {}", taskUrl, e.getMessage(), e);
+            return TaskDetail.builder()
+                    .images(Collections.emptyList())
+                    .toolImages(Collections.emptyList())
+                    .productImages(Collections.emptyList())
+                    .safetyIcons(Collections.emptyList())
+                    .build();
+        }
+    }
+
+    /**
+     * Parsear tabla de detalles
+     */
+    private void parseDetailTable(Element table, TaskDetail detail) {
+        Elements rows = table.select("tr");
+        for (Element row : rows) {
+            Element th = row.selectFirst("th");
+            Element td = row.selectFirst("td");
+            if (th != null && td != null) {
+                String label = th.text().trim().replace(":", "");
+                String value = td.text().trim();
+
+                switch (label) {
+                    case "Departamento": detail.setDepartment(value); break;
+                    case "Ubicación": detail.setLocation(value); break;
+                    case "Máquina": detail.setMachine(value); break;
+                    case "Parte de máquina": detail.setMachinePart(value); break;
+                    case "Punto de mantenimiento": detail.setMaintenancePoint(value); break;
+                    case "Cantidad de puntos": detail.setPointCount(value); break;
+                }
+            }
+        }
+    }
+
+    /**
+     * Buscar enlace "Marcar como realizada"
+     */
+    private Element findMarkDoneLink(Document doc, String taskId) {
+        // Buscar por clase CSS y data-values
+        Elements candidates = doc.select("a.job-set-status");
+        for (Element link : candidates) {
+            String dataValues = link.attr("data-values");
+            if (dataValues.equals(taskId)) {
+                return link;
+            }
+        }
+
+        // Buscar por texto
+        for (Element link : doc.select("a")) {
+            String text = link.text().trim();
+            String dataValues = link.attr("data-values");
+            if (text.contains("Marcar como realizada") && dataValues.equals(taskId)) {
+                return link;
+            }
+        }
+
+        return null;
+    }
+
+    // ==================== PARSING DE ÓRDENES ====================
+
+    /**
+     * Parsear órdenes nuevas (pending-accordion)
      */
     private List<WorkOrder> parsePendingWorkOrders(Document doc) {
         List<WorkOrder> workOrders = new ArrayList<>();
@@ -113,7 +513,6 @@ public class WorkOrderService {
             return workOrders;
         }
 
-        // Find all work order panels
         Elements panels = section.select("> .panel.panel-default");
         for (Element panel : panels) {
             WorkOrder wo = parsePendingWorkOrderPanel(panel);
@@ -126,27 +525,23 @@ public class WorkOrderService {
     }
 
     /**
-     * Parse a pending work order panel (different structure from regular work orders)
+     * Parsear panel de orden nueva
      */
     private WorkOrder parsePendingWorkOrderPanel(Element panel) {
         try {
             Element heading = panel.selectFirst(".panel-heading");
             if (heading == null) return null;
 
-            // Extract work order tag
             Element tagEl = heading.selectFirst(".work-order-tag");
             String tag = tagEl != null ? tagEl.text().trim() : "";
             String id = tag.replace("#", "");
 
-            if (tag.isEmpty() || id.isEmpty()) {
-                return null;
-            }
+            if (tag.isEmpty() || id.isEmpty()) return null;
 
-            // Extract title
             Element titleEl = heading.selectFirst(".work-order-title");
             String title = titleEl != null ? titleEl.text().trim() : "";
 
-            // Extract due date
+            // Extraer fecha y duración
             String dueDate = "";
             String duration = "";
             Elements dateSpans = heading.select(".text-success");
@@ -162,14 +557,14 @@ public class WorkOrderService {
                 }
             }
 
-            // Extract task count
+            // Extraer conteo de tareas
             String taskCount = "";
             Element badge = heading.selectFirst(".label-info");
             if (badge != null) {
                 taskCount = badge.text().replace("Tasks:", "").trim();
             }
 
-            // Extract accept/reject tag URLs
+            // URLs de aceptar/rechazar
             String acceptTagUrl = "";
             String rejectTagUrl = "";
             Element acceptLink = heading.selectFirst("a.accept[href*=accept-tag]");
@@ -177,7 +572,7 @@ public class WorkOrderService {
             if (acceptLink != null) acceptTagUrl = acceptLink.attr("href");
             if (rejectLink != null) rejectTagUrl = rejectLink.attr("href");
 
-            // Parse tasks
+            // Parsear tareas
             List<Task> tasks = new ArrayList<>();
             Element body = panel.selectFirst(".panel-body.work-orders-tasks");
             if (body != null) {
@@ -202,13 +597,13 @@ public class WorkOrderService {
                     .rejectTagUrl(rejectTagUrl)
                     .build();
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Error al parsear orden nueva: {}", e.getMessage());
             return null;
         }
     }
 
     /**
-     * Parse a pending task panel (has Accept/Reject buttons instead of detail link)
+     * Parsear tarea nueva (con botones Aceptar/Rechazar)
      */
     private Task parsePendingTaskPanel(Element taskPanel) {
         try {
@@ -232,13 +627,8 @@ public class WorkOrderService {
             }
 
             Element body = taskPanel.selectFirst(".panel-body");
-            String location = "";
-            String department = "";
-            String machine = "";
-            String machinePart = "";
-            String title = "";
-            String description = "";
-            String product = "";
+            String location = "", department = "", machine = "", machinePart = "";
+            String title = "", description = "", product = "";
 
             if (body != null) {
                 Element locationEl = body.selectFirst(".task-location div");
@@ -270,7 +660,7 @@ public class WorkOrderService {
                 product = productEl != null ? productEl.text().trim() : "";
             }
 
-            // Get accept/reject URLs
+            // URLs de aceptar/rechazar
             String acceptUrl = "";
             String rejectUrl = "";
             Element footer = taskPanel.selectFirst(".panel-footer");
@@ -300,29 +690,27 @@ public class WorkOrderService {
                     .rejectUrl(rejectUrl)
                     .build();
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Error al parsear tarea nueva: {}", e.getMessage());
             return null;
         }
     }
 
     /**
-     * Parse work orders from a specific section
+     * Parsear sección de órdenes (team o work-orders)
      */
     private List<WorkOrder> parseWorkOrderSection(Document doc, String sectionSelector) {
         List<WorkOrder> workOrders = new ArrayList<>();
 
         Element section = doc.selectFirst(sectionSelector);
-        if (section == null) {
-            return workOrders;
-        }
+        if (section == null) return workOrders;
 
-        // Check if there's a "no tasks" message
+        // Verificar si hay mensaje "no hay tareas"
         Element noTasks = section.selectFirst(".text-center");
         if (noTasks != null && noTasks.text().contains("no hay tareas")) {
             return workOrders;
         }
 
-        // Find all work order panels
+        // Parsear paneles
         Elements panels = section.select(".panel.panel-default");
         for (Element panel : panels) {
             WorkOrder wo = parseWorkOrderPanel(panel);
@@ -335,32 +723,25 @@ public class WorkOrderService {
     }
 
     /**
-     * Parse a work order panel
+     * Parsear panel de orden de trabajo
      */
     private WorkOrder parseWorkOrderPanel(Element panel) {
         try {
             Element heading = panel.selectFirst(".panel-heading");
             if (heading == null) return null;
 
-            // Extract work order tag (#112, #113, etc.)
             Element tagEl = heading.selectFirst(".work-order-tag");
             String tag = tagEl != null ? tagEl.text().trim() : "";
             String id = tag.replace("#", "");
 
-            // Skip if no tag (not a real work order)
-            if (tag.isEmpty() || id.isEmpty()) {
-                return null;
-            }
+            if (tag.isEmpty() || id.isEmpty()) return null;
 
-            // Extract title
             Element titleEl = heading.selectFirst(".work-order-title");
             String title = titleEl != null ? titleEl.text().trim() : "";
 
-            // Extract due date
             Element dueDateEl = heading.selectFirst(".text-success strong, .text-danger strong");
             String dueDate = dueDateEl != null ? dueDateEl.text().trim() : "";
 
-            // Extract task count and completion
             String taskCount = "";
             String completionStatus = "";
             Element buttonsDiv = heading.selectFirst(".work-order-buttons");
@@ -374,7 +755,7 @@ public class WorkOrderService {
                 }
             }
 
-            // Parse tasks inside the panel
+            // Parsear tareas
             List<Task> tasks = new ArrayList<>();
             Element body = panel.selectFirst(".panel-body.work-orders-tasks");
             if (body != null) {
@@ -397,13 +778,13 @@ public class WorkOrderService {
                     .tasks(tasks)
                     .build();
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Error al parsear orden: {}", e.getMessage());
             return null;
         }
     }
 
     /**
-     * Parse a task panel
+     * Parsear panel de tarea
      */
     private Task parseTaskPanel(Element taskPanel) {
         try {
@@ -414,20 +795,12 @@ public class WorkOrderService {
             String detailUrl = dataHref != null ? dataHref.attr("data-href") : "";
 
             Element header = taskPanel.selectFirst(".panel-heading");
-            String orderNumber = "";
-            String status = "";
-            String dueDate = "";
-            String dispatchType = "";
+            String orderNumber = "", status = "", dueDate = "", dispatchType = "";
 
             if (header != null) {
                 Element orderNum = header.selectFirst(".task-order-number");
                 orderNumber = orderNum != null ? orderNum.text().trim() : "";
-
-                if ("Completado".equals(orderNumber)) {
-                    status = "completed";
-                } else {
-                    status = "pending";
-                }
+                status = "Completado".equals(orderNumber) ? "completed" : "pending";
 
                 Element dueDateEl = header.selectFirst(".task-order-due");
                 dueDate = dueDateEl != null ? dueDateEl.text().replace("vencimiento:", "").trim() : "";
@@ -437,13 +810,8 @@ public class WorkOrderService {
             }
 
             Element body = taskPanel.selectFirst(".panel-body");
-            String location = "";
-            String department = "";
-            String machine = "";
-            String machinePart = "";
-            String title = "";
-            String description = "";
-            String product = "";
+            String location = "", department = "", machine = "", machinePart = "";
+            String title = "", description = "", product = "";
 
             if (body != null) {
                 Element locationEl = body.selectFirst(".task-location div");
@@ -475,10 +843,11 @@ public class WorkOrderService {
                 product = productEl != null ? productEl.text().trim() : "";
             }
 
-            Element footer = taskPanel.selectFirst(".panel-footer");
+            // Assigned user
             String assignedTo = "";
+            Element footer = taskPanel.selectFirst(".panel-footer");
             if (footer != null) {
-                Element userEl = footer.selectFirst(".task-confirmation-link .fa-user");
+                Element userEl = footer.selectFirst(".fa-user");
                 if (userEl != null && userEl.parent() != null) {
                     assignedTo = userEl.parent().text().replace(userEl.text(), "").trim();
                 }
@@ -501,618 +870,87 @@ public class WorkOrderService {
                     .detailUrl(detailUrl)
                     .build();
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Error al parsear tarea: {}", e.getMessage());
             return null;
         }
     }
 
     /**
-     * Get task detail with all info (except images)
-     */
-    public TaskDetail getTaskDetail(String taskUrl, String identity) {
-        try {
-            String fullUrl = taskUrl.startsWith("http") ? taskUrl : baseUrl + taskUrl;
-            Document doc = getPage(fullUrl, identity);
-
-            TaskDetail detail = new TaskDetail();
-
-            // Parse the detail table
-            Element table = doc.selectFirst("#task-detail-maintenance-point table");
-            if (table != null) {
-                Elements rows = table.select("tr");
-                for (Element row : rows) {
-                    Element th = row.selectFirst("th");
-                    Element td = row.selectFirst("td");
-                    if (th != null && td != null) {
-                        String label = th.text().trim().replace(":", "");
-                        String value = td.text().trim();
-
-                        switch (label) {
-                            case "Departamento":
-                                detail.setDepartment(value);
-                                break;
-                            case "Ubicación":
-                                detail.setLocation(value);
-                                break;
-                            case "Máquina":
-                                detail.setMachine(value);
-                                break;
-                            case "Parte de máquina":
-                                detail.setMachinePart(value);
-                                break;
-                            case "Punto de mantenimiento":
-                                detail.setMaintenancePoint(value);
-                                break;
-                            case "Cantidad de puntos":
-                                detail.setPointCount(value);
-                                break;
-                        }
-                    }
-                }
-            }
-
-            // Parse task type and application mode
-            Element taskTypeEl = doc.selectFirst(".task-detail-task-name p");
-            detail.setTaskType(taskTypeEl != null ? taskTypeEl.text().trim() : "");
-
-            Element appModeEl = doc.selectFirst(".task-detail-tool-info p");
-            detail.setApplicationMode(appModeEl != null ? appModeEl.text().trim() : "");
-
-            // Parse product info
-            Element productNameEl = doc.selectFirst(".task-detail-product-info span");
-            detail.setProductName(productNameEl != null ? productNameEl.text().trim() : "");
-
-            Element volumeEl = doc.selectFirst(".task-detail-product-info p:nth-child(3)");
-            detail.setProductVolume(volumeEl != null ? volumeEl.text().trim() : "");
-
-            // Set empty lists for images (not needed)
-            detail.setImages(Collections.emptyList());
-            detail.setToolImages(Collections.emptyList());
-            detail.setProductImages(Collections.emptyList());
-            detail.setSafetyIcons(Collections.emptyList());
-
-            return detail;
-        } catch (Exception e) {
-            e.printStackTrace();
-            return TaskDetail.builder()
-                    .images(Collections.emptyList())
-                    .toolImages(Collections.emptyList())
-                    .productImages(Collections.emptyList())
-                    .safetyIcons(Collections.emptyList())
-                    .build();
-        }
-    }
-
-    /**
-     * Get all work orders with full task details (except images)
-     */
-    public Map<String, List<WorkOrder>> getFullWorkOrders(String identity) {
-        Map<String, List<WorkOrder>> allOrders = getAllWorkOrders(identity);
-
-        // Process team work orders
-        for (WorkOrder wo : allOrders.getOrDefault("teamWorkOrders", Collections.emptyList())) {
-            enrichWorkOrderWithDetails(wo, identity);
-        }
-
-        // Process my work orders
-        for (WorkOrder wo : allOrders.getOrDefault("myWorkOrders", Collections.emptyList())) {
-            enrichWorkOrderWithDetails(wo, identity);
-        }
-
-        return allOrders;
-    }
-
-    /**
-     * Enrich a work order with task details
-     */
-    private void enrichWorkOrderWithDetails(WorkOrder wo, String identity) {
-        if (wo.getTasks() != null) {
-            for (Task task : wo.getTasks()) {
-                if (task.getDetailUrl() != null && !task.getDetailUrl().isEmpty()) {
-                    TaskDetail detail = getTaskDetail(task.getDetailUrl(), identity);
-                    task.setDetail(detail);
-                }
-            }
-        }
-    }
-
-    /**
-     * Add a comment to a task
-     */
-    public boolean addComment(String taskId, String commentText, byte[] imageData, String imageName, String identity) {
-        try {
-            Map<String, String> cookies = sessionService.getCookiesByIdentity(identity);
-            if (cookies == null) {
-                throw new RuntimeException("Not logged in");
-            }
-
-            String taskUrl = baseUrl + "/engineer-task-detail-" + taskId;
-            
-            // First, get the task detail page to find the CSRF token and form
-            Document doc = Jsoup.connect(taskUrl)
-                    .userAgent(USER_AGENT)
-                    .cookies(cookies)
-                    .timeout(15000)
-                    .ignoreContentType(true)
-                    .get();
-
-            // Find the comment form
-            Element form = doc.selectFirst("form[action*=comment], form[action*=add-comment], #comment-form, .comment-form");
-            if (form == null) {
-                // Try to find any form with textarea
-                form = doc.selectFirst("form:has(textarea)");
-            }
-
-            if (form == null) {
-                throw new RuntimeException("Could not find comment form on page");
-            }
-
-            // Get CSRF token
-            Element csrfElement = doc.selectFirst("input[name=csrf]");
-            String csrfToken = csrfElement != null ? csrfElement.val() : "";
-
-            // Get form action
-            String action = form.attr("action");
-            if (action.isEmpty()) {
-                action = taskUrl;
-            } else if (!action.startsWith("http")) {
-                action = baseUrl + action;
-            }
-
-            // Submit the comment
-            Connection.Response response;
-            if (imageData != null && imageName != null && !imageName.isEmpty()) {
-                // Submit with image
-                response = Jsoup.connect(action)
-                        .method(Connection.Method.POST)
-                        .userAgent(USER_AGENT)
-                        .cookies(cookies)
-                        .data("csrf", csrfToken)
-                        .data("comment", commentText)
-                        .data("submit", "")
-                        .header("Content-Type", "multipart/form-data")
-                        .timeout(30000)
-                        .ignoreHttpErrors(true)
-                        .execute();
-            } else {
-                // Submit without image
-                response = Jsoup.connect(action)
-                        .method(Connection.Method.POST)
-                        .userAgent(USER_AGENT)
-                        .cookies(cookies)
-                        .data("csrf", csrfToken)
-                        .data("comment", commentText)
-                        .data("submit", "")
-                        .timeout(15000)
-                        .ignoreHttpErrors(true)
-                        .execute();
-            }
-
-            return response.statusCode() == 200 || response.statusCode() == 302;
-        } catch (Exception e) {
-            e.printStackTrace();
-            return false;
-        }
-    }
-
-    /**
-     * Marcar tarea como completada ("Marcar como realizada")
-     * 
-     * El enlace tiene esta estructura:
-     * <a href="/jobs-move-to-history" data-values="4510709" class="job-set-status">
-     *   Marcar como realizada
-     * </a>
-     * 
-     * Se debe hacer POST a /jobs-move-to-history con el taskId en data-values
-     */
-    public boolean markTaskAsCompleted(String taskId, String identity) {
-        try {
-            logger.info("Marcando tarea como completada: {} - Usuario: {}", taskId, identity);
-            
-            Map<String, String> cookies = sessionService.getCookiesByIdentity(identity);
-            if (cookies == null) {
-                logger.error("No hay sesión activa para usuario: {}", identity);
-                throw new RuntimeException("Not logged in");
-            }
-
-            String taskUrl = baseUrl + "/engineer-task-detail-" + taskId;
-            logger.debug("Obteniendo página de tarea: {}", taskUrl);
-
-            // Get the task detail page
-            Document doc = Jsoup.connect(taskUrl)
-                    .userAgent(USER_AGENT)
-                    .cookies(cookies)
-                    .timeout(15000)
-                    .ignoreContentType(true)
-                    .get();
-
-            // Buscar el enlace "Marcar como realizada" con data-values que contenga el taskId
-            Element markDoneLink = null;
-            
-            // Primero buscar por clase CSS específica
-            Elements candidates = doc.select("a.job-set-status");
-            for (Element link : candidates) {
-                String dataValues = link.attr("data-values");
-                if (dataValues.equals(taskId)) {
-                    markDoneLink = link;
-                    break;
-                }
-            }
-            
-            // Si no se encontró por clase, buscar por texto
-            if (markDoneLink == null) {
-                for (Element link : doc.select("a")) {
-                    String text = link.text().trim();
-                    String dataValues = link.attr("data-values");
-                    if (text.contains("Marcar como realizada") && dataValues.equals(taskId)) {
-                        markDoneLink = link;
-                        break;
-                    }
-                }
-            }
-
-            if (markDoneLink == null) {
-                logger.error("No se encontró el enlace 'Marcar como realizada' para tarea: {}", taskId);
-                throw new RuntimeException("Could not find 'Marcar como realizada' link");
-            }
-
-            String href = markDoneLink.attr("href");
-            if (href.isEmpty()) {
-                logger.error("El enlace 'Marcar como realizada' no tiene href para tarea: {}", taskId);
-                throw new RuntimeException("Link has no href");
-            }
-
-            // Construir URL completa
-            String fullUrl = href.startsWith("http") ? href : baseUrl + href;
-            logger.debug("URL de completar tarea: {}", fullUrl);
-
-            // Obtener token CSRF de la página
-            String csrfToken = "";
-            Element csrfElement = doc.selectFirst("input[name=csrf]");
-            if (csrfElement != null) {
-                csrfToken = csrfElement.val();
-            }
-
-            // Hacer POST con el taskId (no GET)
-            Connection.Response response = Jsoup.connect(fullUrl)
-                    .method(Connection.Method.POST)
-                    .userAgent(USER_AGENT)
-                    .cookies(cookies)
-                    .data("job", taskId)
-                    .data("csrf", csrfToken)
-                    .timeout(15000)
-                    .followRedirects(true)
-                    .ignoreContentType(true)
-                    .ignoreHttpErrors(true)
-                    .execute();
-
-            boolean success = response.statusCode() == 200 || response.statusCode() == 302;
-            if (success) {
-                logger.info("Tarea marcada como completada exitosamente: {} - Status: {}", taskId, response.statusCode());
-            } else {
-                logger.error("Error al marcar tarea como completada: {} - Status: {}", taskId, response.statusCode());
-            }
-            return success;
-        } catch (Exception e) {
-            logger.error("Excepción al marcar tarea como completada: {} - Error: {}", taskId, e.getMessage(), e);
-            e.printStackTrace();
-            return false;
-        }
-    }
-
-    /**
-     * Reject a task with a reason
-     * The reject page returns a modal with a form containing:
-     * - description (textarea for reason)
-     * - csrf (hidden token)
-     * - submit
-     */
-    public boolean rejectTask(String taskId, String reason, String identity) {
-        try {
-            logger.info("Rechazando tarea: {} - Usuario: {} - Razón: {}", taskId, identity, reason);
-            
-            Map<String, String> cookies = sessionService.getCookiesByIdentity(identity);
-            if (cookies == null) {
-                logger.error("No hay sesión activa para usuario: {}", identity);
-                throw new RuntimeException("Not logged in");
-            }
-
-            // Get the reject page to get the CSRF token
-            String rejectUrl = baseUrl + "/jobs-reject-" + taskId;
-            logger.debug("Obteniendo página de rechazo: {}", rejectUrl);
-            
-            Document doc = Jsoup.connect(rejectUrl)
-                    .userAgent(USER_AGENT)
-                    .cookies(cookies)
-                    .timeout(15000)
-                    .ignoreContentType(true)
-                    .get();
-
-            // The response is JSON with modal HTML, extract CSRF from it
-            String html = doc.html();
-            
-            // Extract CSRF token from the HTML in JSON response
-            String csrfToken = "";
-            int csrfIndex = html.indexOf("name=\\\"csrf\\\" value=\\\"");
-            if (csrfIndex > 0) {
-                int start = csrfIndex + "name=\\\"csrf\\\" value=\\\"".length();
-                int end = html.indexOf("\\\"", start);
-                if (end > start) {
-                    csrfToken = html.substring(start, end);
-                }
-            }
-
-            // If still empty, try different escape pattern
-            if (csrfToken.isEmpty()) {
-                csrfIndex = html.indexOf("name=\"csrf\" value=\"");
-                if (csrfIndex > 0) {
-                    int start = csrfIndex + "name=\"csrf\" value=\"".length();
-                    int end = html.indexOf("\"", start);
-                    if (end > start) {
-                        csrfToken = html.substring(start, end);
-                    }
-                }
-            }
-
-            if (csrfToken.isEmpty()) {
-                logger.warn("No se encontró token CSRF para rechazo de tarea: {}", taskId);
-            } else {
-                logger.debug("Token CSRF obtenido para rechazo");
-            }
-
-            // Submit the reject form
-            logger.debug("Enviando formulario de rechazo");
-            Connection.Response response = Jsoup.connect(rejectUrl)
-                    .method(Connection.Method.POST)
-                    .userAgent(USER_AGENT)
-                    .cookies(cookies)
-                    .data("description", reason)
-                    .data("csrf", csrfToken)
-                    .data("submit", "Guardar")
-                    .timeout(15000)
-                    .ignoreContentType(true)
-                    .ignoreHttpErrors(true)
-                    .execute();
-
-            boolean success = response.statusCode() == 200 || response.statusCode() == 302;
-            if (success) {
-                logger.info("Tarea rechazada exitosamente: {} - Status: {}", taskId, response.statusCode());
-            } else {
-                logger.error("Error al rechazar tarea: {} - Status: {}", taskId, response.statusCode());
-            }
-            return success;
-        } catch (Exception e) {
-            logger.error("Excepción al rechazar tarea: {} - Error: {}", taskId, e.getMessage(), e);
-            e.printStackTrace();
-            return false;
-        }
-    }
-
-    /**
-     * Accept a task
-     */
-    public boolean acceptTask(String taskId, String identity) {
-        try {
-            logger.info("Aceptando tarea: {} - Usuario: {}", taskId, identity);
-            
-            Map<String, String> cookies = sessionService.getCookiesByIdentity(identity);
-            if (cookies == null) {
-                logger.error("No hay sesión activa para usuario: {}", identity);
-                throw new RuntimeException("Not logged in");
-            }
-
-            String acceptUrl = baseUrl + "/jobs-accept-" + taskId;
-            logger.debug("URL de aceptación: {}", acceptUrl);
-            
-            Connection.Response response = Jsoup.connect(acceptUrl)
-                    .method(Connection.Method.GET)
-                    .userAgent(USER_AGENT)
-                    .cookies(cookies)
-                    .timeout(15000)
-                    .followRedirects(true)
-                    .ignoreContentType(true)
-                    .ignoreHttpErrors(true)
-                    .execute();
-
-            boolean success = response.statusCode() == 200 || response.statusCode() == 302;
-            if (success) {
-                logger.info("Tarea aceptada exitosamente: {} - Status: {}", taskId, response.statusCode());
-            } else {
-                logger.error("Error al aceptar tarea: {} - Status: {}", taskId, response.statusCode());
-            }
-            return success;
-        } catch (Exception e) {
-            logger.error("Excepción al aceptar tarea: {} - Error: {}", taskId, e.getMessage(), e);
-            e.printStackTrace();
-            return false;
-        }
-    }
-
-    /**
-     * Get service ID for a task (needed for comments)
-     * The service ID is found on the task detail page
-     */
-    public String getServiceId(String taskId, String identity) {
-        try {
-            String taskUrl = baseUrl + "/engineer-task-detail-" + taskId;
-            Document doc = getPage(taskUrl, identity);
-            
-            // Find the "nuevo comentario" link which contains the service ID
-            Element commentLink = doc.selectFirst("a[href*=service-remark-create]");
-            if (commentLink != null) {
-                String href = commentLink.attr("href");
-                // Extract service ID from href like "/service-remark-create-1191426"
-                return href.replace("/service-remark-create-", "").trim();
-            }
-            
-            return null;
-        } catch (Exception e) {
-            e.printStackTrace();
-            return null;
-        }
-    }
-
-    /**
-     * Get comments for a task from the task detail page
-     */
-    public List<TaskComment> getTaskComments(String taskId, String identity) {
-        try {
-            logger.info("Obteniendo comentarios para tarea: {} - Usuario: {}", taskId, identity);
-            
-            String taskUrl = baseUrl + "/engineer-task-detail-" + taskId;
-            Document doc = getPage(taskUrl, identity);
-            
-            List<TaskComment> comments = new ArrayList<>();
-            
-            // Find the comment list section
-            Element commentList = doc.selectFirst("#comment-list");
-            if (commentList == null) {
-                logger.debug("No se encontró lista de comentarios");
-                return comments;
-            }
-            
-            // Find all comment elements (well-sm divs)
-            Elements commentElements = commentList.select(".well.well-sm");
-            
-            for (Element commentEl : commentElements) {
-                TaskComment comment = parseCommentElement(commentEl);
-                if (comment != null) {
-                    comments.add(comment);
-                }
-            }
-            
-            logger.info("Comentarios encontrados para tarea: {} - Cantidad: {}", taskId, comments.size());
-            return comments;
-        } catch (Exception e) {
-            logger.error("Error al obtener comentarios para tarea: {} - Error: {}", taskId, e.getMessage(), e);
-            e.printStackTrace();
-            return new ArrayList<>();
-        }
-    }
-
-    /**
-     * Parse a comment element from the task detail page
-     * Structure:
-     * <div class="well well-sm">
-     *   <div class="row">
-     *     <div class="col-sm-11">
-     *       <p><span class="glyphicon glyphicon-calendar"></span> 24/06/2026 
-     *          <span class="glyphicon glyphicon-time"></span> 07:38 
-     *          <span class="glyphicon glyphicon-user"></span> Cristian Tapia 
-     *          <span class="glyphicon glyphicon-picture"></span> 
-     *          <a data-toggle="lightbox" data-type="image" href="/service-remark-display-image-701234"> Imagen </a>
-     *       </p>
-     *       <p><strong>Comentarios del parte de mantenimiento: </strong> texto del comentario</p>
-     *     </div>
-     *     <div class="col-sm-1 text-right">
-     *       <a data-ajax="" href="/service-remark-edit-132434" class="btn btn-sm">...</a>
-     *     </div>
-     *   </div>
-     * </div>
+     * Parsear elemento de comentario
      */
     private TaskComment parseCommentElement(Element commentEl) {
         try {
-            // Get the first paragraph with metadata
             Element metaParagraph = commentEl.selectFirst("p");
-            if (metaParagraph == null) {
-                return null;
-            }
-            
+            if (metaParagraph == null) return null;
+
             String metaText = metaParagraph.text();
-            
-            // Extract date (format: DD/MM/YYYY)
+
+            // Extraer fecha
             String date = "";
-            java.util.regex.Pattern datePattern = java.util.regex.Pattern.compile("(\\d{2}/\\d{2}/\\d{4})");
-            java.util.regex.Matcher dateMatcher = datePattern.matcher(metaText);
-            if (dateMatcher.find()) {
-                date = dateMatcher.group(1);
-            }
-            
-            // Extract time (format: HH:MM)
+            Pattern datePattern = Pattern.compile("(\\d{2}/\\d{2}/\\d{4})");
+            Matcher dateMatcher = datePattern.matcher(metaText);
+            if (dateMatcher.find()) date = dateMatcher.group(1);
+
+            // Extraer hora
             String time = "";
-            java.util.regex.Pattern timePattern = java.util.regex.Pattern.compile("(\\d{2}:\\d{2})");
-            java.util.regex.Matcher timeMatcher = timePattern.matcher(metaText);
-            if (timeMatcher.find()) {
-                time = timeMatcher.group(1);
-            }
-            
-            // Combine date and time
-            String dateTime = date;
-            if (!time.isEmpty()) {
-                dateTime = date + " " + time;
-            }
-            
-            // Extract author (text after glyphicon-user)
+            Pattern timePattern = Pattern.compile("(\\d{2}:\\d{2})");
+            Matcher timeMatcher = timePattern.matcher(metaText);
+            if (timeMatcher.find()) time = timeMatcher.group(1);
+
+            String dateTime = date + (time.isEmpty() ? "" : " " + time);
+
+            // Extraer autor
             String author = "";
             Element userIcon = metaParagraph.selectFirst(".glyphicon-user");
             if (userIcon != null) {
-                // Get the text content after user icon
                 String iconHtml = userIcon.outerHtml();
                 int iconIdx = metaParagraph.html().indexOf(iconHtml);
                 if (iconIdx >= 0) {
                     String afterIcon = metaParagraph.html().substring(iconIdx + iconHtml.length());
-                    // Remove HTML tags
                     afterIcon = afterIcon.replaceAll("<[^>]+>", " ").trim();
-                    // Remove image indicator if present
                     int imageIdx = afterIcon.indexOf("Imagen");
-                    if (imageIdx > 0) {
-                        afterIcon = afterIcon.substring(0, imageIdx);
-                    }
-                    // Remove picture icon reference
+                    if (imageIdx > 0) afterIcon = afterIcon.substring(0, imageIdx);
                     int pictureIdx = afterIcon.indexOf("glyphicon-picture");
-                    if (pictureIdx > 0) {
-                        afterIcon = afterIcon.substring(0, pictureIdx);
-                    }
+                    if (pictureIdx > 0) afterIcon = afterIcon.substring(0, pictureIdx);
                     author = afterIcon.trim();
                 }
             }
-            
-            // Extract text from second paragraph
+
+            // Extraer texto
             String text = "";
             Elements paragraphs = commentEl.select("p");
             if (paragraphs.size() > 1) {
-                Element textParagraph = paragraphs.get(1);
-                // Remove the "Comentarios del parte de mantenimiento: " prefix
-                String fullText = textParagraph.text();
+                String fullText = paragraphs.get(1).text();
                 if (fullText.contains("Comentarios del parte de mantenimiento:")) {
-                    text = fullText.substring(fullText.indexOf("Comentarios del parte de mantenimiento:") + 
+                    text = fullText.substring(fullText.indexOf("Comentarios del parte de mantenimiento:") +
                             "Comentarios del parte de mantenimiento:".length()).trim();
                 } else if (fullText.contains("Comentario rápido:")) {
-                    text = fullText.substring(fullText.indexOf("Comentario rápido:") + 
+                    text = fullText.substring(fullText.indexOf("Comentario rápido:") +
                             "Comentario rápido:".length()).trim();
                 } else {
                     text = fullText;
                 }
             }
-            
-            // Extract image URL if present
+
+            // Extraer imagen
             String imageUrl = "";
             Element imgLink = commentEl.selectFirst("a[data-toggle=lightbox]");
             if (imgLink != null) {
                 String href = imgLink.attr("href");
                 if (!href.isEmpty()) {
-                    imageUrl = href.startsWith("http") ? href : baseUrl + href;
+                    imageUrl = href.startsWith("http") ? href : ilacClient.buildUrl(href);
                 }
             }
-            
-            // Extract edit link to get comment ID
-            String editLink = "";
+
+            // Extraer ID del comentario
+            String commentId = "";
             Element editEl = commentEl.selectFirst("a[href*=service-remark-edit]");
             if (editEl != null) {
-                editLink = editEl.attr("href");
+                Pattern idPattern = Pattern.compile("service-remark-edit-(\\d+)");
+                Matcher idMatcher = idPattern.matcher(editEl.attr("href"));
+                if (idMatcher.find()) commentId = idMatcher.group(1);
             }
-            
-            // Extract comment ID from edit link
-            String commentId = "";
-            if (!editLink.isEmpty()) {
-                java.util.regex.Pattern idPattern = java.util.regex.Pattern.compile("service-remark-edit-(\\d+)");
-                java.util.regex.Matcher idMatcher = idPattern.matcher(editLink);
-                if (idMatcher.find()) {
-                    commentId = idMatcher.group(1);
-                }
-            }
-            
-            // Only return if we have at least some content
+
             if (!dateTime.isEmpty() || !author.isEmpty() || !text.isEmpty()) {
                 return TaskComment.builder()
                         .id(commentId)
@@ -1123,232 +961,11 @@ public class WorkOrderService {
                         .fileName(imageUrl.isEmpty() ? "" : "Imagen")
                         .build();
             }
-            
+
             return null;
         } catch (Exception e) {
             logger.error("Error al parsear comentario: {}", e.getMessage());
             return null;
-        }
-    }
-
-    /**
-     * Add a comment to a task using the service ID
-     */
-    public boolean addCommentWithServiceId(String serviceId, String commentText, byte[] imageData, String imageName, String identity) {
-        try {
-            logger.info("Agregando comentario - ServiceId: {} - Usuario: {} - Tiene imagen: {}", 
-                    serviceId, identity, imageData != null);
-            
-            Map<String, String> cookies = sessionService.getCookiesByIdentity(identity);
-            if (cookies == null) {
-                logger.error("No hay sesión activa para usuario: {}", identity);
-                throw new RuntimeException("Not logged in");
-            }
-
-            // Get the comment form page to get CSRF token
-            String formUrl = baseUrl + "/service-remark-create-" + serviceId;
-            logger.debug("Obteniendo formulario de comentario: {}", formUrl);
-            
-            Document doc = Jsoup.connect(formUrl)
-                    .userAgent(USER_AGENT)
-                    .cookies(cookies)
-                    .timeout(15000)
-                    .ignoreContentType(true)
-                    .get();
-
-            // Extract CSRF token from JSON response
-            // The response has Unicode escapes: \u0022 for quotes
-            String html = doc.html();
-            String csrfToken = "";
-            
-            // Try Unicode escaped pattern: name=\u0022csrf\u0022 value=\u0022...\u0022
-            int csrfIndex = html.indexOf("name=\\u0022csrf\\u0022 value=\\u0022");
-            if (csrfIndex > 0) {
-                int start = csrfIndex + "name=\\u0022csrf\\u0022 value=\\u0022".length();
-                int end = html.indexOf("\\u0022", start);
-                if (end > start) {
-                    csrfToken = html.substring(start, end);
-                }
-            }
-            
-            // Try escaped pattern: name=\"csrf\" value=\"...\"
-            if (csrfToken.isEmpty()) {
-                csrfIndex = html.indexOf("name=\\\"csrf\\\" value=\\\"");
-                if (csrfIndex > 0) {
-                    int start = csrfIndex + "name=\\\"csrf\\\" value=\\\"".length();
-                    int end = html.indexOf("\\\"", start);
-                    if (end > start) {
-                        csrfToken = html.substring(start, end);
-                    }
-                }
-            }
-            
-            // Try unescaped pattern: name="csrf" value="..."
-            if (csrfToken.isEmpty()) {
-                csrfIndex = html.indexOf("name=\"csrf\" value=\"");
-                if (csrfIndex > 0) {
-                    int start = csrfIndex + "name=\"csrf\" value=\"".length();
-                    int end = html.indexOf("\"", start);
-                    if (end > start) {
-                        csrfToken = html.substring(start, end);
-                    }
-                }
-            }
-
-            if (csrfToken.isEmpty()) {
-                logger.warn("No se encontró token CSRF para comentario - ServiceId: {}", serviceId);
-                // Log first 500 chars for debugging
-                logger.debug("HTML response (first 500 chars): {}", html.substring(0, Math.min(500, html.length())));
-            } else {
-                logger.debug("Token CSRF obtenido para comentario: {}...", csrfToken.substring(0, Math.min(20, csrfToken.length())));
-            }
-
-            // Submit the comment form
-            logger.debug("Enviando formulario de comentario");
-            Connection.Response response;
-            if (imageData != null && imageName != null && !imageName.isEmpty()) {
-                // Submit with image using multipart and InputStream
-                logger.debug("Enviando con imagen: {} ({} bytes)", imageName, imageData.length);
-                response = Jsoup.connect(formUrl)
-                        .method(Connection.Method.POST)
-                        .userAgent(USER_AGENT)
-                        .cookies(cookies)
-                        .data("csrf", csrfToken)
-                        .data("serviceRemark[text]", commentText)
-                        .data("serviceRemark[id]", "")
-                        .data("serviceRemark[file][fileInfo]", imageName, new ByteArrayInputStream(imageData))
-                        .data("submit", "Añadir comentario")
-                        .header("Content-Type", "multipart/form-data")
-                        .timeout(30000)
-                        .ignoreContentType(true)
-                        .ignoreHttpErrors(true)
-                        .execute();
-            } else {
-                // Submit without image
-                response = Jsoup.connect(formUrl)
-                        .method(Connection.Method.POST)
-                        .userAgent(USER_AGENT)
-                        .cookies(cookies)
-                        .data("csrf", csrfToken)
-                        .data("serviceRemark[text]", commentText)
-                        .data("serviceRemark[id]", "")
-                        .data("submit", "Añadir comentario")
-                        .timeout(15000)
-                        .ignoreContentType(true)
-                        .ignoreHttpErrors(true)
-                        .execute();
-            }
-
-            boolean success = response.statusCode() == 200 || response.statusCode() == 302;
-            if (success) {
-                logger.info("Comentario agregado exitosamente - ServiceId: {} - Status: {}", 
-                        serviceId, response.statusCode());
-            } else {
-                logger.error("Error al agregar comentario - ServiceId: {} - Status: {}", 
-                        serviceId, response.statusCode());
-            }
-            return success;
-        } catch (Exception e) {
-            logger.error("Excepción al agregar comentario - ServiceId: {} - Error: {}", 
-                    serviceId, e.getMessage(), e);
-            e.printStackTrace();
-            return false;
-        }
-    }
-
-    /**
-     * Edit an existing comment
-     * The edit page returns a form similar to create, but with existing data
-     */
-    public boolean editComment(String commentId, String newText, String identity) {
-        try {
-            logger.info("Editando comentario: {} - Usuario: {}", commentId, identity);
-            
-            Map<String, String> cookies = sessionService.getCookiesByIdentity(identity);
-            if (cookies == null) {
-                logger.error("No hay sesión activa para usuario: {}", identity);
-                throw new RuntimeException("Not logged in");
-            }
-
-            // Get the edit page to get CSRF token and current data
-            String editUrl = baseUrl + "/service-remark-edit-" + commentId;
-            logger.debug("Obteniendo página de edición: {}", editUrl);
-            
-            Document doc = Jsoup.connect(editUrl)
-                    .userAgent(USER_AGENT)
-                    .cookies(cookies)
-                    .timeout(15000)
-                    .ignoreContentType(true)
-                    .get();
-
-            // Extract CSRF token
-            String html = doc.html();
-            String csrfToken = "";
-            
-            // Try Unicode escaped pattern
-            int csrfIndex = html.indexOf("name=\\u0022csrf\\u0022 value=\\u0022");
-            if (csrfIndex > 0) {
-                int start = csrfIndex + "name=\\u0022csrf\\u0022 value=\\u0022".length();
-                int end = html.indexOf("\\u0022", start);
-                if (end > start) {
-                    csrfToken = html.substring(start, end);
-                }
-            }
-            
-            // Try escaped pattern
-            if (csrfToken.isEmpty()) {
-                csrfIndex = html.indexOf("name=\\\"csrf\\\" value=\\\"");
-                if (csrfIndex > 0) {
-                    int start = csrfIndex + "name=\\\"csrf\\\" value=\\\"".length();
-                    int end = html.indexOf("\\\"", start);
-                    if (end > start) {
-                        csrfToken = html.substring(start, end);
-                    }
-                }
-            }
-            
-            // Try unescaped pattern
-            if (csrfToken.isEmpty()) {
-                csrfIndex = html.indexOf("name=\"csrf\" value=\"");
-                if (csrfIndex > 0) {
-                    int start = csrfIndex + "name=\"csrf\" value=\"".length();
-                    int end = html.indexOf("\"", start);
-                    if (end > start) {
-                        csrfToken = html.substring(start, end);
-                    }
-                }
-            }
-
-            if (csrfToken.isEmpty()) {
-                logger.warn("No se encontró token CSRF para edición de comentario: {}", commentId);
-            }
-
-            // Submit the edit form
-            logger.debug("Enviando formulario de edición");
-            Connection.Response response = Jsoup.connect(editUrl)
-                    .method(Connection.Method.POST)
-                    .userAgent(USER_AGENT)
-                    .cookies(cookies)
-                    .data("csrf", csrfToken)
-                    .data("serviceRemark[text]", newText)
-                    .data("serviceRemark[id]", commentId)
-                    .data("submit", "Guardar")
-                    .timeout(15000)
-                    .ignoreContentType(true)
-                    .ignoreHttpErrors(true)
-                    .execute();
-
-            boolean success = response.statusCode() == 200 || response.statusCode() == 302;
-            if (success) {
-                logger.info("Comentario editado exitosamente: {} - Status: {}", commentId, response.statusCode());
-            } else {
-                logger.error("Error al editar comentario: {} - Status: {}", commentId, response.statusCode());
-            }
-            return success;
-        } catch (Exception e) {
-            logger.error("Excepción al editar comentario: {} - Error: {}", commentId, e.getMessage(), e);
-            e.printStackTrace();
-            return false;
         }
     }
 }

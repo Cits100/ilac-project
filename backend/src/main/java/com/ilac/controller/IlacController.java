@@ -1,8 +1,10 @@
 package com.ilac.controller;
 
+import com.ilac.config.AuthInterceptor;
 import com.ilac.model.*;
 import com.ilac.service.SessionService;
 import com.ilac.service.WorkOrderService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,6 +15,12 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Controlador REST para el sistema ILAC.
+ * 
+ * La autenticación se maneja automáticamente mediante AuthInterceptor.
+ * Los endpoints protegidos reciben la sesión desde el request.
+ */
 @RestController
 @RequestMapping("/api")
 @CrossOrigin(origins = "*")
@@ -26,6 +34,8 @@ public class IlacController {
     @Autowired
     private WorkOrderService workOrderService;
 
+    // ==================== ENDPOINTS PÚBLICOS ====================
+
     /**
      * Iniciar sesión y obtener todas las órdenes de trabajo
      * POST /api/dashboard
@@ -33,13 +43,14 @@ public class IlacController {
      * Retorna: token de sesión + datos de órdenes
      */
     @PostMapping("/dashboard")
-    public ResponseEntity<FullDashboardResponse> getFullDashboard(@RequestBody LoginRequest request) {
+    public ResponseEntity<FullDashboardResponse> getFullDashboard(@RequestBody LoginRequest request,
+                                                                   HttpServletRequest httpRequest) {
         logger.info("POST /api/dashboard - Usuario: {}", request.getIdentity());
-        
+
         LoginResponse loginResult = sessionService.login(request);
-        
+
         if (!loginResult.isSuccess()) {
-            logger.warn("Login fallido para usuario: {} - Razón: {}", request.getIdentity(), loginResult.getMessage());
+            logger.warn("Login fallido: {} - Razón: {}", request.getIdentity(), loginResult.getMessage());
             return ResponseEntity.status(401).body(FullDashboardResponse.builder()
                     .success(false)
                     .message(loginResult.getMessage())
@@ -48,73 +59,66 @@ public class IlacController {
 
         try {
             Map<String, List<WorkOrder>> workOrders = workOrderService.getFullWorkOrders(request.getIdentity());
-            
+
             int newCount = workOrders.getOrDefault("newWorkOrders", List.of()).stream()
                     .mapToInt(wo -> wo.getTasks().size()).sum();
             int teamCount = workOrders.getOrDefault("teamWorkOrders", List.of()).stream()
                     .mapToInt(wo -> wo.getTasks().size()).sum();
             int myCount = workOrders.getOrDefault("myWorkOrders", List.of()).stream()
                     .mapToInt(wo -> wo.getTasks().size()).sum();
-            
-            logger.info("Login exitoso - Usuario: {} - Nuevas: {}, Equipo: {}, Propias: {}", 
+
+            logger.info("Login exitoso: {} - Nuevas: {}, Equipo: {}, Propias: {}",
                     request.getIdentity(), newCount, teamCount, myCount);
 
             return ResponseEntity.ok(FullDashboardResponse.builder()
                     .success(true)
                     .message("Inicio de sesión exitoso")
                     .sessionToken(loginResult.getSessionToken())
-                    .userName(loginResult.getUserData() != null ? 
-                            loginResult.getUserData().getOrDefault("userInfo", request.getIdentity()) : 
+                    .userName(loginResult.getUserData() != null ?
+                            loginResult.getUserData().getOrDefault("userInfo", request.getIdentity()) :
                             request.getIdentity())
                     .workOrders(workOrders)
                     .build());
         } catch (Exception e) {
-            logger.error("Error al obtener órdenes para usuario: {} - Error: {}", 
-                    request.getIdentity(), e.getMessage(), e);
+            logger.error("Error al obtener órdenes: {} - Error: {}", request.getIdentity(), e.getMessage(), e);
             return ResponseEntity.ok(FullDashboardResponse.builder()
                     .success(true)
                     .message("Inicio de sesión exitoso, pero error al obtener órdenes: " + e.getMessage())
                     .sessionToken(loginResult.getSessionToken())
                     .userName(request.getIdentity())
                     .workOrders(Map.of(
-                        "newWorkOrders", List.of(),
-                        "teamWorkOrders", List.of(),
-                        "myWorkOrders", List.of()
+                            "newWorkOrders", List.of(),
+                            "teamWorkOrders", List.of(),
+                            "myWorkOrders", List.of()
                     ))
                     .build());
         }
     }
 
+    // ==================== ENDPOINTS PROTEGIDOS ====================
+    // La autenticación se maneja automáticamente por AuthInterceptor
+
     /**
      * Obtener comentarios de una tarea
      * POST /api/task-comments
-     * Body: { "token": "session-token", "taskId": "123456" }
+     * Header: Authorization: Bearer <token>
+     * Body: { "taskId": "123456" }
      */
     @PostMapping("/task-comments")
-    public ResponseEntity<Map<String, Object>> getTaskComments(@RequestBody TokenRequest request) {
-        logger.info("POST /api/task-comments - Token: {}... - Tarea: {}", 
-                request.getToken().substring(0, Math.min(8, request.getToken().length())), 
-                request.getTaskId());
-        
-        SessionService.UserSession session = sessionService.getSessionByToken(request.getToken());
-        if (session == null) {
-            logger.warn("Token inválido o expirado");
-            return ResponseEntity.status(401).body(Map.of(
-                    "success", false,
-                    "message", "Sesión inválida o expirada"
-            ));
-        }
+    public ResponseEntity<Map<String, Object>> getTaskComments(@RequestBody TokenRequest request,
+                                                                HttpServletRequest httpRequest) {
+        SessionService.UserSession session = getSessionFromRequest(httpRequest);
+        logger.info("POST /api/task-comments - Usuario: {} - Tarea: {}", session.getIdentity(), request.getTaskId());
 
         try {
             var comments = workOrderService.getTaskComments(request.getTaskId(), session.getIdentity());
-            logger.info("Comentarios obtenidos para tarea: {} - Cantidad: {}", request.getTaskId(), comments.size());
+            logger.info("Comentarios obtenidos: {} - Tarea: {}", comments.size(), request.getTaskId());
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "comments", comments
             ));
         } catch (Exception e) {
-            logger.error("Error al obtener comentarios para tarea: {} - Error: {}", 
-                    request.getTaskId(), e.getMessage(), e);
+            logger.error("Error al obtener comentarios: {} - Error: {}", request.getTaskId(), e.getMessage(), e);
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
                     "message", "Error al obtener comentarios: " + e.getMessage()
@@ -125,39 +129,31 @@ public class IlacController {
     /**
      * Agregar comentario a una tarea
      * POST /api/comment
-     * Body: { "token": "session-token", "taskId": "123456", "comment": "texto", "imageBase64": "opcional", "imageName": "opcional" }
+     * Header: Authorization: Bearer <token>
+     * Body: { "taskId": "123456", "comment": "texto", "imageBase64": "opcional", "imageName": "opcional" }
      */
     @PostMapping("/comment")
-    public ResponseEntity<Map<String, Object>> addComment(@RequestBody Map<String, String> request) {
-        String token = request.get("token");
+    public ResponseEntity<Map<String, Object>> addComment(@RequestBody Map<String, String> request,
+                                                           HttpServletRequest httpRequest) {
+        SessionService.UserSession session = getSessionFromRequest(httpRequest);
         String taskId = request.get("taskId");
         String commentText = request.get("comment");
         String imageBase64 = request.get("imageBase64");
         String imageName = request.get("imageName");
-        
-        logger.info("POST /api/comment - Token: {}... - Tarea: {}", 
-                token.substring(0, Math.min(8, token.length())), taskId);
-        
-        SessionService.UserSession session = sessionService.getSessionByToken(token);
-        if (session == null) {
-            logger.warn("Token inválido o expirado");
-            return ResponseEntity.status(401).body(Map.of(
-                    "success", false,
-                    "message", "Sesión inválida o expirada"
-            ));
-        }
 
-        // Obtener service ID para la tarea
+        logger.info("POST /api/comment - Usuario: {} - Tarea: {}", session.getIdentity(), taskId);
+
+        // Obtener service ID
         String serviceId = workOrderService.getServiceId(taskId, session.getIdentity());
         if (serviceId == null) {
-            logger.error("No se encontró serviceId para tarea: {} - Usuario: {}", taskId, session.getIdentity());
+            logger.error("No se encontró serviceId para tarea: {}", taskId);
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
                     "message", "No se pudo encontrar el ID de servicio para la tarea"
             ));
         }
 
-        logger.debug("ServiceId encontrado: {} para tarea: {}", serviceId, taskId);
+        logger.debug("ServiceId: {} para tarea: {}", serviceId, taskId);
 
         // Decodificar imagen si se proporciona
         byte[] imageData = null;
@@ -166,7 +162,7 @@ public class IlacController {
                 imageData = Base64.getDecoder().decode(imageBase64);
                 logger.debug("Imagen decodificada: {} ({} bytes)", imageName, imageData.length);
             } catch (Exception e) {
-                logger.error("Error decodificando imagen base64 - Error: {}", e.getMessage());
+                logger.error("Error decodificando imagen: {}", e.getMessage());
                 return ResponseEntity.badRequest().body(Map.of(
                         "success", false,
                         "message", "Datos de imagen base64 inválidos"
@@ -175,195 +171,123 @@ public class IlacController {
         }
 
         boolean result = workOrderService.addCommentWithServiceId(
-                serviceId,
-                commentText,
-                imageData,
-                imageName,
-                session.getIdentity()
-        );
+                serviceId, commentText, imageData, imageName, session.getIdentity());
 
         if (result) {
-            logger.info("Comentario agregado exitosamente - Token: {}... - Tarea: {}", 
-                    token.substring(0, Math.min(8, token.length())), taskId);
-            return ResponseEntity.ok(Map.of(
-                    "success", true,
-                    "message", "Comentario agregado exitosamente"
-            ));
+            logger.info("Comentario agregado: {} - Tarea: {}", session.getIdentity(), taskId);
+            return ResponseEntity.ok(Map.of("success", true, "message", "Comentario agregado exitosamente"));
         } else {
-            logger.error("Error al agregar comentario - Token: {}... - Tarea: {} - ServiceId: {}", 
-                    token.substring(0, Math.min(8, token.length())), taskId, serviceId);
-            return ResponseEntity.badRequest().body(Map.of(
-                    "success", false,
-                    "message", "Error al agregar comentario"
-            ));
+            logger.error("Error al agregar comentario: {} - Tarea: {}", session.getIdentity(), taskId);
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "Error al agregar comentario"));
         }
     }
 
     /**
      * Editar un comentario
      * POST /api/edit-comment
-     * Body: { "token": "session-token", "commentId": "123456", "comment": "nuevo texto" }
+     * Header: Authorization: Bearer <token>
+     * Body: { "commentId": "123456", "comment": "nuevo texto" }
      */
     @PostMapping("/edit-comment")
-    public ResponseEntity<Map<String, Object>> editComment(@RequestBody TokenRequest request) {
-        logger.info("POST /api/edit-comment - Token: {}... - Comentario: {}", 
-                request.getToken().substring(0, Math.min(8, request.getToken().length())), 
-                request.getCommentId());
-        
-        SessionService.UserSession session = sessionService.getSessionByToken(request.getToken());
-        if (session == null) {
-            logger.warn("Token inválido o expirado");
-            return ResponseEntity.status(401).body(Map.of(
-                    "success", false,
-                    "message", "Sesión inválida o expirada"
-            ));
-        }
+    public ResponseEntity<Map<String, Object>> editComment(@RequestBody TokenRequest request,
+                                                            HttpServletRequest httpRequest) {
+        SessionService.UserSession session = getSessionFromRequest(httpRequest);
+        logger.info("POST /api/edit-comment - Usuario: {} - Comentario: {}",
+                session.getIdentity(), request.getCommentId());
 
-        boolean result = workOrderService.editComment(request.getCommentId(), request.getComment(), session.getIdentity());
+        boolean result = workOrderService.editComment(
+                request.getCommentId(), request.getComment(), session.getIdentity());
 
         if (result) {
-            logger.info("Comentario editado exitosamente - Token: {}... - Comentario: {}", 
-                    request.getToken().substring(0, Math.min(8, request.getToken().length())), 
-                    request.getCommentId());
-            return ResponseEntity.ok(Map.of(
-                    "success", true,
-                    "message", "Comentario editado exitosamente"
-            ));
+            logger.info("Comentario editado: {} - Comentario: {}", session.getIdentity(), request.getCommentId());
+            return ResponseEntity.ok(Map.of("success", true, "message", "Comentario editado exitosamente"));
         } else {
-            logger.error("Error al editar comentario - Token: {}... - Comentario: {}", 
-                    request.getToken().substring(0, Math.min(8, request.getToken().length())), 
-                    request.getCommentId());
-            return ResponseEntity.badRequest().body(Map.of(
-                    "success", false,
-                    "message", "Error al editar comentario"
-            ));
+            logger.error("Error al editar comentario: {} - Comentario: {}", session.getIdentity(), request.getCommentId());
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "Error al editar comentario"));
         }
     }
 
     /**
      * Marcar tarea como completada
      * POST /api/complete-task
-     * Body: { "token": "session-token", "taskId": "123456" }
+     * Header: Authorization: Bearer <token>
+     * Body: { "taskId": "123456" }
      */
     @PostMapping("/complete-task")
-    public ResponseEntity<Map<String, Object>> completeTask(@RequestBody TokenRequest request) {
-        logger.info("POST /api/complete-task - Token: {}... - Tarea: {}", 
-                request.getToken().substring(0, Math.min(8, request.getToken().length())), 
-                request.getTaskId());
-        
-        SessionService.UserSession session = sessionService.getSessionByToken(request.getToken());
-        if (session == null) {
-            logger.warn("Token inválido o expirado");
-            return ResponseEntity.status(401).body(Map.of(
-                    "success", false,
-                    "message", "Sesión inválida o expirada"
-            ));
-        }
+    public ResponseEntity<Map<String, Object>> completeTask(@RequestBody TokenRequest request,
+                                                             HttpServletRequest httpRequest) {
+        SessionService.UserSession session = getSessionFromRequest(httpRequest);
+        logger.info("POST /api/complete-task - Usuario: {} - Tarea: {}", session.getIdentity(), request.getTaskId());
 
         boolean result = workOrderService.markTaskAsCompleted(request.getTaskId(), session.getIdentity());
 
         if (result) {
-            logger.info("Tarea marcada como completada - Token: {}... - Tarea: {}", 
-                    request.getToken().substring(0, Math.min(8, request.getToken().length())), 
-                    request.getTaskId());
-            return ResponseEntity.ok(Map.of(
-                    "success", true,
-                    "message", "Tarea marcada como completada"
-            ));
+            logger.info("Tarea completada: {} - Tarea: {}", session.getIdentity(), request.getTaskId());
+            return ResponseEntity.ok(Map.of("success", true, "message", "Tarea marcada como completada"));
         } else {
-            logger.error("Error al marcar tarea como completada - Token: {}... - Tarea: {}", 
-                    request.getToken().substring(0, Math.min(8, request.getToken().length())), 
-                    request.getTaskId());
-            return ResponseEntity.badRequest().body(Map.of(
-                    "success", false,
-                    "message", "Error al marcar tarea como completada"
-            ));
+            logger.error("Error al completar tarea: {} - Tarea: {}", session.getIdentity(), request.getTaskId());
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "Error al marcar tarea como completada"));
         }
     }
 
     /**
      * Rechazar tarea con razón
      * POST /api/reject-task
-     * Body: { "token": "session-token", "taskId": "123456", "reason": "motivo" }
+     * Header: Authorization: Bearer <token>
+     * Body: { "taskId": "123456", "reason": "motivo" }
      */
     @PostMapping("/reject-task")
-    public ResponseEntity<Map<String, Object>> rejectTask(@RequestBody TokenRequest request) {
-        logger.info("POST /api/reject-task - Token: {}... - Tarea: {} - Razón: {}", 
-                request.getToken().substring(0, Math.min(8, request.getToken().length())), 
-                request.getTaskId(), request.getReason());
-        
-        SessionService.UserSession session = sessionService.getSessionByToken(request.getToken());
-        if (session == null) {
-            logger.warn("Token inválido o expirado");
-            return ResponseEntity.status(401).body(Map.of(
-                    "success", false,
-                    "message", "Sesión inválida o expirada"
-            ));
-        }
+    public ResponseEntity<Map<String, Object>> rejectTask(@RequestBody TokenRequest request,
+                                                           HttpServletRequest httpRequest) {
+        SessionService.UserSession session = getSessionFromRequest(httpRequest);
+        logger.info("POST /api/reject-task - Usuario: {} - Tarea: {} - Razón: {}",
+                session.getIdentity(), request.getTaskId(), request.getReason());
 
         boolean result = workOrderService.rejectTask(
-                request.getTaskId(),
-                request.getReason(),
-                session.getIdentity()
-        );
+                request.getTaskId(), request.getReason(), session.getIdentity());
 
         if (result) {
-            logger.info("Tarea rechazada exitosamente - Token: {}... - Tarea: {}", 
-                    request.getToken().substring(0, Math.min(8, request.getToken().length())), 
-                    request.getTaskId());
-            return ResponseEntity.ok(Map.of(
-                    "success", true,
-                    "message", "Tarea rechazada exitosamente"
-            ));
+            logger.info("Tarea rechazada: {} - Tarea: {}", session.getIdentity(), request.getTaskId());
+            return ResponseEntity.ok(Map.of("success", true, "message", "Tarea rechazada exitosamente"));
         } else {
-            logger.error("Error al rechazar tarea - Token: {}... - Tarea: {}", 
-                    request.getToken().substring(0, Math.min(8, request.getToken().length())), 
-                    request.getTaskId());
-            return ResponseEntity.badRequest().body(Map.of(
-                    "success", false,
-                    "message", "Error al rechazar tarea"
-            ));
+            logger.error("Error al rechazar tarea: {} - Tarea: {}", session.getIdentity(), request.getTaskId());
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "Error al rechazar tarea"));
         }
     }
 
     /**
      * Aceptar tarea
      * POST /api/accept-task
-     * Body: { "token": "session-token", "taskId": "123456" }
+     * Header: Authorization: Bearer <token>
+     * Body: { "taskId": "123456" }
      */
     @PostMapping("/accept-task")
-    public ResponseEntity<Map<String, Object>> acceptTask(@RequestBody TokenRequest request) {
-        logger.info("POST /api/accept-task - Token: {}... - Tarea: {}", 
-                request.getToken().substring(0, Math.min(8, request.getToken().length())), 
-                request.getTaskId());
-        
-        SessionService.UserSession session = sessionService.getSessionByToken(request.getToken());
-        if (session == null) {
-            logger.warn("Token inválido o expirado");
-            return ResponseEntity.status(401).body(Map.of(
-                    "success", false,
-                    "message", "Sesión inválida o expirada"
-            ));
-        }
+    public ResponseEntity<Map<String, Object>> acceptTask(@RequestBody TokenRequest request,
+                                                           HttpServletRequest httpRequest) {
+        SessionService.UserSession session = getSessionFromRequest(httpRequest);
+        logger.info("POST /api/accept-task - Usuario: {} - Tarea: {}", session.getIdentity(), request.getTaskId());
 
         boolean result = workOrderService.acceptTask(request.getTaskId(), session.getIdentity());
 
         if (result) {
-            logger.info("Tarea aceptada exitosamente - Token: {}... - Tarea: {}", 
-                    request.getToken().substring(0, Math.min(8, request.getToken().length())), 
-                    request.getTaskId());
-            return ResponseEntity.ok(Map.of(
-                    "success", true,
-                    "message", "Tarea aceptada exitosamente"
-            ));
+            logger.info("Tarea aceptada: {} - Tarea: {}", session.getIdentity(), request.getTaskId());
+            return ResponseEntity.ok(Map.of("success", true, "message", "Tarea aceptada exitosamente"));
         } else {
-            logger.error("Error al aceptar tarea - Token: {}... - Tarea: {}", 
-                    request.getToken().substring(0, Math.min(8, request.getToken().length())), 
-                    request.getTaskId());
-            return ResponseEntity.badRequest().body(Map.of(
-                    "success", false,
-                    "message", "Error al aceptar tarea"
-            ));
+            logger.error("Error al aceptar tarea: {} - Tarea: {}", session.getIdentity(), request.getTaskId());
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "Error al aceptar tarea"));
         }
+    }
+
+    // ==================== MÉTODOS AUXILIARES ====================
+
+    /**
+     * Obtener sesión del request (inyectada por AuthInterceptor)
+     */
+    private SessionService.UserSession getSessionFromRequest(HttpServletRequest request) {
+        SessionService.UserSession session = AuthInterceptor.getSessionFromRequest(request);
+        if (session == null) {
+            throw new RuntimeException("Sesión no encontrada en el request");
+        }
+        return session;
     }
 }
