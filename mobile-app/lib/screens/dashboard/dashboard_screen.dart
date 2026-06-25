@@ -56,6 +56,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
 
     try {
+      // Procesar cola de acciones pendientes
+      await _connectivityService.processQueue();
+
       final newOrders = await _authService.getNewWorkOrders();
       final teamOrders = await _authService.getTeamWorkOrders();
       final personalOrders = await _authService.getPersonalWorkOrders();

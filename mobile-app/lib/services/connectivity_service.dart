@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import '../services/database_service.dart';
 import '../services/auth_service.dart';
+import '../services/api_service.dart';
 
 class ConnectivityService {
   static final ConnectivityService _instance = ConnectivityService._internal();
@@ -11,23 +12,40 @@ class ConnectivityService {
   final Connectivity _connectivity = Connectivity();
   final DatabaseService _dbService = DatabaseService();
   final AuthService _authService = AuthService();
+  final ApiService _apiService = ApiService();
 
   StreamSubscription<List<ConnectivityResult>>? _subscription;
+  Timer? _periodicTimer;
   bool _isProcessing = false;
 
   // Callback para notificar acciones fallidas
   Function(String actionType, String taskId, String error)? onActionFailed;
+  // Callback para notificar acciones exitosas
+  Function(String actionType, String taskId)? onActionSuccess;
 
+  /// Inicializar el servicio
   void initialize() {
+    // Escuchar cambios de conectividad
     _subscription = _connectivity.onConnectivityChanged.listen((results) {
       if (results.isNotEmpty && results.first != ConnectivityResult.none) {
-        _processQueue();
+        processQueue();
       }
+    });
+
+    // Procesar cola periódicamente (cada 30 segundos)
+    _periodicTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      processQueue();
+    });
+
+    // Procesar cola inmediatamente al iniciar
+    Future.delayed(const Duration(seconds: 5), () {
+      processQueue();
     });
   }
 
   void dispose() {
     _subscription?.cancel();
+    _periodicTimer?.cancel();
   }
 
   Future<bool> isConnected() async {
@@ -35,8 +53,13 @@ class ConnectivityService {
     return results.isNotEmpty && results.first != ConnectivityResult.none;
   }
 
+  /// Agregar acción a la cola
   Future<void> addToQueue(String actionType, String taskId,
       {String? comment, String? imageBase64, String? imageName, String? reason}) async {
+    
+    // Obtener token actual
+    final token = _authService.currentSessionToken;
+    
     await _dbService.addToQueue(
       actionType,
       taskId,
@@ -44,21 +67,30 @@ class ConnectivityService {
       imageBase64: imageBase64,
       imageName: imageName,
       reason: reason,
+      sessionToken: token,
     );
 
     // Intentar procesar inmediatamente si hay conexión
     if (await isConnected()) {
-      _processQueue();
+      await processQueue();
     }
   }
 
-  Future<void> _processQueue() async {
+  /// Procesar cola de acciones pendientes
+  Future<void> processQueue() async {
     if (_isProcessing) return;
     _isProcessing = true;
 
     try {
       final items = await _dbService.getQueueItems();
       
+      if (items.isEmpty) {
+        _isProcessing = false;
+        return;
+      }
+
+      print('Procesando ${items.length} acciones pendientes...');
+
       for (var item in items) {
         final id = item['id'] as int;
         final actionType = item['actionType'] as String;
@@ -68,12 +100,22 @@ class ConnectivityService {
         final imageName = item['imageName'] as String?;
         final reason = item['reason'] as String?;
         final retryCount = item['retryCount'] as int;
+        final storedToken = item['sessionToken'] as String?;
 
         // Si ya falló 3 veces, notificar y no reintentar más
         if (retryCount >= 3) {
           final error = item['lastError'] as String? ?? 'Número máximo de reintentos alcanzado';
           onActionFailed?.call(actionType, taskId, error);
-          // NO eliminar - mantener para que el usuario pueda ver
+          continue;
+        }
+
+        // Usar token almacenado o token actual
+        final tokenToUse = storedToken ?? _authService.currentSessionToken;
+        
+        if (tokenToUse == null) {
+          // No hay token disponible, marcar como error
+          await _dbService.updateQueueItemError(id, 'No hay sesión activa');
+          await _dbService.incrementRetryCount(id);
           continue;
         }
 
@@ -82,7 +124,8 @@ class ConnectivityService {
 
         try {
           if (actionType == 'comment') {
-            final result = await _authService.addComment(
+            final result = await _apiService.addComment(
+              tokenToUse,
               taskId,
               comment ?? '',
               imageBase64: imageBase64,
@@ -91,15 +134,15 @@ class ConnectivityService {
             success = result['success'] == true;
             errorMessage = result['message'];
           } else if (actionType == 'complete') {
-            final result = await _authService.completeTask(taskId);
+            final result = await _apiService.completeTask(tokenToUse, taskId);
             success = result['success'] == true;
             errorMessage = result['message'];
           } else if (actionType == 'reject') {
-            final result = await _authService.rejectTask(taskId, reason ?? '');
+            final result = await _apiService.rejectTask(tokenToUse, taskId, reason ?? '');
             success = result['success'] == true;
             errorMessage = result['message'];
           } else if (actionType == 'accept') {
-            final result = await _authService.acceptTask(taskId);
+            final result = await _apiService.acceptTask(tokenToUse, taskId);
             success = result['success'] == true;
             errorMessage = result['message'];
           }
@@ -109,15 +152,18 @@ class ConnectivityService {
 
         if (success) {
           await _dbService.removeQueueItem(id);
+          onActionSuccess?.call(actionType, taskId);
+          print('Acción completada: $actionType para tarea $taskId');
         } else {
           await _dbService.incrementRetryCount(id);
           if (errorMessage != null) {
             await _dbService.updateQueueItemError(id, errorMessage);
           }
+          print('Acción fallida: $actionType para tarea $taskId - $errorMessage');
         }
       }
     } catch (e) {
-      // Will retry next time
+      print('Error procesando cola: $e');
     } finally {
       _isProcessing = false;
     }

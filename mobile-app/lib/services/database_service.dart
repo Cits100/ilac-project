@@ -19,7 +19,7 @@ class DatabaseService {
     String path = join(await getDatabasesPath(), 'ilac_app.db');
     return await openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -42,6 +42,10 @@ class DatabaseService {
       await db.delete('task_details');
       await db.delete('tasks');
       await db.delete('work_orders');
+    }
+    if (oldVersion < 4) {
+      // Add sessionToken to offline_queue
+      await db.execute('ALTER TABLE offline_queue ADD COLUMN sessionToken TEXT');
     }
   }
 
@@ -109,6 +113,7 @@ class DatabaseService {
         imageBase64 TEXT,
         imageName TEXT,
         reason TEXT,
+        sessionToken TEXT,
         createdAt TEXT,
         retryCount INTEGER DEFAULT 0,
         lastError TEXT
@@ -203,7 +208,7 @@ class DatabaseService {
   // ========== OFFLINE QUEUE ==========
 
   Future<void> addToQueue(String actionType, String taskId,
-      {String? comment, String? imageBase64, String? imageName, String? reason}) async {
+      {String? comment, String? imageBase64, String? imageName, String? reason, String? sessionToken}) async {
     final db = await database;
     await db.insert('offline_queue', {
       'actionType': actionType,
@@ -212,6 +217,7 @@ class DatabaseService {
       'imageBase64': imageBase64,
       'imageName': imageName,
       'reason': reason,
+      'sessionToken': sessionToken,
       'createdAt': DateTime.now().toIso8601String(),
       'retryCount': 0,
     });

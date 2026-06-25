@@ -16,6 +16,7 @@ class AuthService {
   String? _sessionToken;
 
   String? get currentIdentity => _currentIdentity;
+  String? get currentSessionToken => _sessionToken;
   bool get isLoggedIn => _sessionToken != null;
 
   /// Iniciar sesión y obtener token de sesión
