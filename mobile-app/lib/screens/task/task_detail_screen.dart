@@ -134,6 +134,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         setState(() {
           _selectedImage = null;
         });
+        _loadComments(); // Reload comments after adding
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -586,6 +587,64 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 ),
               ),
             ],
+
+            // Comments list section - always show
+            const SizedBox(height: 16),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.comment, color: AppTheme.primaryRed, size: 20),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Comentarios (${_comments.length})',
+                          style: const TextStyle(
+                            color: AppTheme.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                        if (_isLoadingComments)
+                          const Padding(
+                            padding: EdgeInsets.only(left: 8),
+                            child: SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppTheme.primaryRed,
+                              ),
+                            ),
+                          ),
+                        const Spacer(),
+                        IconButton(
+                          icon: const Icon(Icons.refresh, color: AppTheme.lightGrey, size: 20),
+                          onPressed: _loadComments,
+                          tooltip: 'Actualizar comentarios',
+                        ),
+                      ],
+                    ),
+                    const Divider(color: AppTheme.darkGrey, height: 16),
+                    if (_comments.isEmpty && !_isLoadingComments)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 16),
+                        child: Center(
+                          child: Text(
+                            'No hay comentarios',
+                            style: TextStyle(color: AppTheme.grey, fontSize: 14),
+                          ),
+                        ),
+                      )
+                    else
+                      ..._comments.map((comment) => _buildCommentCard(comment)),
+                  ],
+                ),
+              ),
+            ),
 
             // Comment section (not for new tasks)
             if (!isNewTask) ...[
