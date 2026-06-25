@@ -128,19 +128,40 @@ public class WorkOrderService {
 
             List<TaskComment> comments = new ArrayList<>();
 
-            // Buscar sección de comentarios
+            // Loggear parte del HTML para debugging
+            String html = doc.html();
+            logger.debug("HTML de tarea (primeros 2000 chars): {}", 
+                    html.substring(0, Math.min(2000, html.length())));
+
+            // Buscar sección de comentarios con múltiples selectores
             Element commentList = doc.selectFirst("#comment-list");
             if (commentList == null) {
-                logger.debug("No se encontró lista de comentarios");
-                return comments;
+                logger.debug("No se encontró #comment-list, probando otros selectores");
+                commentList = doc.selectFirst(".comments-section, .tab-pane.active, #comments");
             }
-
-            // Parsear cada comentario
-            Elements commentElements = commentList.select(".well.well-sm");
-            for (Element commentEl : commentElements) {
-                TaskComment comment = parseCommentElement(commentEl);
-                if (comment != null) {
-                    comments.add(comment);
+            
+            if (commentList == null) {
+                logger.debug("No se encontró sección de comentarios con ningún selector");
+                // Buscar directamente elementos de comentario
+                Elements commentElements = doc.select(".well.well-sm, .comment-item, .remark-item");
+                logger.debug("Elementos de comentario encontrados directamente: {}", commentElements.size());
+                
+                for (Element commentEl : commentElements) {
+                    TaskComment comment = parseCommentElement(commentEl);
+                    if (comment != null) {
+                        comments.add(comment);
+                    }
+                }
+            } else {
+                // Parsear cada comentario
+                Elements commentElements = commentList.select(".well.well-sm");
+                logger.debug("Elementos de comentario encontrados en sección: {}", commentElements.size());
+                
+                for (Element commentEl : commentElements) {
+                    TaskComment comment = parseCommentElement(commentEl);
+                    if (comment != null) {
+                        comments.add(comment);
+                    }
                 }
             }
 
@@ -300,17 +321,21 @@ public class WorkOrderService {
             String responseBody = response.body();
             boolean success = response.statusCode() == 200 || response.statusCode() == 302;
             
+            // Loggear body completo para debugging
+            logger.debug("Respuesta del formulario - Status: {} - Body length: {}", 
+                    response.statusCode(), responseBody.length());
+            logger.debug("Body completo: {}", responseBody);
+            
             if (success) {
                 // Verificar si la respuesta indica éxito real
-                if (responseBody.contains("error") || responseBody.contains("Error")) {
-                    logger.warn("Respuesta indica posible error - ServiceId: {} - Body: {}", 
-                            serviceId, responseBody.substring(0, Math.min(200, responseBody.length())));
+                if (responseBody.contains("alert-danger")) {
+                    logger.warn("Respuesta indica posible error - ServiceId: {} - Body completo: {}", 
+                            serviceId, responseBody);
                 }
                 logger.info("Comentario agregado - ServiceId: {} - Status: {}", serviceId, response.statusCode());
             } else {
-                logger.error("Error al agregar comentario - ServiceId: {} - Status: {} - Body: {}", 
-                        serviceId, response.statusCode(), 
-                        responseBody.substring(0, Math.min(200, responseBody.length())));
+                logger.error("Error al agregar comentario - ServiceId: {} - Status: {} - Body completo: {}", 
+                        serviceId, response.statusCode(), responseBody);
             }
             return success;
         } catch (Exception e) {
