@@ -45,6 +45,16 @@ public class WorkOrderService {
     // ==================== MÉTODOS PÚBLICOS ====================
 
     /**
+     * Obtener HTML crudo de una página (para debugging)
+     */
+    public String getRawHtml(String path, String identity) throws IOException {
+        Map<String, String> cookies = getCookiesForUser(identity);
+        String url = path.startsWith("http") ? path : ilacClient.buildUrl(path);
+        Document doc = ilacClient.getPage(url, cookies);
+        return doc.html();
+    }
+
+    /**
      * Obtener todas las órdenes de trabajo (nuevas, equipo, propias)
      */
     public Map<String, List<WorkOrder>> getAllWorkOrders(String identity) {

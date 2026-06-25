@@ -146,6 +146,35 @@ public class IlacController {
     // La autenticación se maneja automáticamente por AuthInterceptor
 
     /**
+     * Debug: Obtener HTML crudo de página de tarea
+     * POST /api/debug/task-html
+     * Header: Authorization: Bearer <token>
+     * Body: { "taskId": "4510708" }
+     * Retorna: HTML de la página de tarea
+     */
+    @PostMapping("/debug/task-html")
+    public ResponseEntity<Map<String, Object>> debugTaskHtml(@RequestBody TokenRequest request,
+                                                              HttpServletRequest httpRequest) {
+        SessionService.UserSession session = getSessionFromRequest(httpRequest);
+        logger.info("DEBUG /api/debug/task-html - Tarea: {}", request.getTaskId());
+
+        try {
+            String html = workOrderService.getRawHtml("/engineer-task-detail-" + request.getTaskId(), session.getIdentity());
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "taskId", request.getTaskId(),
+                    "html", html
+            ));
+        } catch (Exception e) {
+            logger.error("Error al obtener HTML de tarea: {} - Error: {}", request.getTaskId(), e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "message", "Error: " + e.getMessage()
+            ));
+        }
+    }
+
+    /**
      * Obtener comentarios de una tarea
      * POST /api/task-comments
      * Header: Authorization: Bearer <token>

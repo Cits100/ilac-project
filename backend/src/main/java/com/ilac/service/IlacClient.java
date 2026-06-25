@@ -70,6 +70,7 @@ public class IlacClient {
 
     /**
      * Enviar formulario POST con archivo
+     * NOTA: No establecer Content-Type manualmente - Jsoup genera el boundary automáticamente
      */
     public Connection.Response postFormWithFile(String url, Map<String, String> cookies,
                                                  Map<String, String> formData,
@@ -85,15 +86,15 @@ public class IlacClient {
                 .ignoreContentType(true)
                 .ignoreHttpErrors(true);
 
+        // Agregar archivo PRIMERO (Jsoup lo detecta y genera Content-Type con boundary)
+        connection.data(fileFieldName, fileName, new ByteArrayInputStream(fileData));
+
         // Agregar datos del formulario
         for (Map.Entry<String, String> entry : formData.entrySet()) {
             connection.data(entry.getKey(), entry.getValue());
         }
 
-        // Agregar archivo
-        connection.data(fileFieldName, fileName, new ByteArrayInputStream(fileData));
-        connection.header("Content-Type", "multipart/form-data");
-
+        // NO establecer Content-Type manualmente - Jsoup genera el boundary automáticamente
         return connection.execute();
     }
 
