@@ -183,6 +183,22 @@ class AuthService {
     return result;
   }
 
+  /// Obtener detalle completo de tarea (comentarios + estado)
+  Future<Map<String, dynamic>> getTaskDetail(String taskId) async {
+    if (_sessionToken == null) {
+      return {'success': false, 'message': 'No hay sesión activa', 'errorType': 'session_expired'};
+    }
+
+    final result = await _apiService.getTaskDetail(_sessionToken!, taskId);
+    
+    if (result['errorType'] == 'session_expired') {
+      _sessionToken = null;
+      await _secureStorage.delete(key: 'session_token');
+    }
+    
+    return result;
+  }
+
   /// Agregar comentario a una tarea
   Future<Map<String, dynamic>> addComment(
     String taskId,

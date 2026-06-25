@@ -37,11 +37,15 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   bool _isAccepting = false;
   bool _isLoadingComments = false;
   List<TaskComment> _comments = [];
+  String _taskStatus = 'pending'; // 'pending' or 'completed'
+  String _taskStatusText = '';
+  bool _canComplete = true;
 
   @override
   void initState() {
     super.initState();
-    _loadComments();
+    _taskStatus = widget.task.status;
+    _refreshTaskData();
   }
 
   @override
@@ -51,26 +55,37 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     super.dispose();
   }
 
-  Future<void> _loadComments() async {
+  Future<void> _refreshTaskData() async {
     setState(() {
       _isLoadingComments = true;
     });
 
     try {
-      final result = await _authService.getTaskComments(widget.task.id);
-      if (result['success'] == true && result['comments'] != null) {
+      final result = await _authService.getTaskDetail(widget.task.id);
+      if (result['success'] == true && mounted) {
         setState(() {
-          _comments = (result['comments'] as List)
-              .map((c) => TaskComment.fromJson(c))
-              .toList();
+          // Actualizar comentarios
+          if (result['comments'] != null) {
+            _comments = (result['comments'] as List)
+                .map((c) => TaskComment.fromJson(c))
+                .toList();
+          }
+          // Actualizar estado
+          if (result['status'] != null) {
+            _taskStatus = result['status']['status'] ?? 'pending';
+            _taskStatusText = result['status']['statusText'] ?? '';
+            _canComplete = result['status']['canComplete'] == 'true';
+          }
         });
       }
     } catch (e) {
-      // Error loading comments - silent fail
+      // Error loading - silent fail
     } finally {
-      setState(() {
-        _isLoadingComments = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoadingComments = false;
+        });
+      }
     }
   }
 
@@ -166,7 +181,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         setState(() {
           _selectedImage = null;
         });
-        _loadComments(); // Reload comments after adding
+        _refreshTaskData(); // Reload data after adding comment
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -253,6 +268,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       final result = await _authService.completeTask(widget.task.id);
 
       if (result['success'] == true) {
+        await _refreshTaskData(); // Refresh to show completed status
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -260,7 +276,6 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               backgroundColor: Colors.green,
             ),
           );
-          Navigator.pop(context, true);
         }
       } else {
         await _connectivityService.addToQueue('complete', widget.task.id);
@@ -356,6 +371,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
 
       if (result['success'] == true) {
         _rejectReasonController.clear();
+        await _refreshTaskData(); // Refresh to show updated status
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -363,7 +379,6 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               backgroundColor: Colors.green,
             ),
           );
-          Navigator.pop(context, true);
         }
       } else {
         await _connectivityService.addToQueue(
@@ -412,6 +427,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       final result = await _authService.acceptTask(widget.task.id);
 
       if (result['success'] == true) {
+        await _refreshTaskData(); // Refresh to show updated status
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -419,7 +435,6 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               backgroundColor: Colors.green,
             ),
           );
-          Navigator.pop(context, true);
         }
       } else {
         await _connectivityService.addToQueue('accept', widget.task.id);
@@ -453,51 +468,47 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   Widget build(BuildContext context) {
     final task = widget.task;
     final detail = task.detail;
-    final isCompleted = task.status == 'completed';
+    final isCompleted = _taskStatus == 'completed';
     final isNewTask = widget.taskType == 'new';
 
     return Scaffold(
       appBar: AppBar(
         title: Text('Tarea #${task.orderNumber}'),
-        actions: [
-          if (!isCompleted && !isNewTask)
-            IconButton(
-              icon: const Icon(Icons.check_circle_outline),
-              onPressed: _isCompleting ? null : _completeTask,
-              tooltip: 'Marcar como realizada',
-            ),
-        ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Status badge
-            if (isCompleted)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.green.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.check_circle, color: Colors.green, size: 20),
-                    SizedBox(width: 8),
-                    Text(
-                      'TAREA COMPLETADA',
-                      style: TextStyle(
-                        color: Colors.green,
-                        fontWeight: FontWeight.bold,
+      body: RefreshIndicator(
+        onRefresh: _refreshTaskData,
+        color: AppTheme.primaryRed,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Status badge
+              if (isCompleted)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.check_circle, color: Colors.green, size: 20),
+                      const SizedBox(width: 8),
+                      Text(
+                        _taskStatusText.isNotEmpty ? _taskStatusText.toUpperCase() : 'TAREA COMPLETADA',
+                        style: const TextStyle(
+                          color: Colors.green,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-            if (isCompleted) const SizedBox(height: 16),
+              if (isCompleted) const SizedBox(height: 16),
 
             // Accept/Reject buttons for new tasks
             if (isNewTask && !isCompleted) ...[
@@ -655,7 +666,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                         const Spacer(),
                         IconButton(
                           icon: const Icon(Icons.refresh, color: AppTheme.lightGrey, size: 20),
-                          onPressed: _loadComments,
+                          onPressed: _refreshTaskData,
                           tooltip: 'Actualizar comentarios',
                         ),
                       ],
@@ -772,6 +783,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
             const SizedBox(height: 16),
           ],
         ),
+        ), // RefreshIndicator
       ),
     );
   }
@@ -809,6 +821,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   }
 
   Widget _buildCommentCard(TaskComment comment) {
+    // Check if comment belongs to current user
     final currentUser = _authService.currentIdentity ?? '';
     final isOwnComment = comment.author.isNotEmpty && 
         (comment.author.toLowerCase().contains(currentUser.split('@').first.toLowerCase()) ||
@@ -825,6 +838,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Header with author, date and edit button
           Row(
             children: [
               const Icon(Icons.person, size: 16, color: AppTheme.lightGrey),
@@ -842,22 +856,32 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               if (comment.date.isNotEmpty)
                 Text(
                   comment.date,
-                  style: const TextStyle(color: AppTheme.grey, fontSize: 11),
+                  style: const TextStyle(
+                    color: AppTheme.grey,
+                    fontSize: 11,
+                  ),
                 ),
               if (isOwnComment && comment.id.isNotEmpty)
                 IconButton(
                   icon: const Icon(Icons.edit, size: 18, color: AppTheme.primaryRed),
                   onPressed: () => _editComment(comment),
-                  tooltip: 'Editar',
+                  tooltip: 'Editar comentario',
                 ),
             ],
           ),
           const SizedBox(height: 8),
+          
+          // Comment text
           if (comment.text.isNotEmpty)
             Text(
               comment.text,
-              style: const TextStyle(color: AppTheme.lightGrey, fontSize: 14),
+              style: const TextStyle(
+                color: AppTheme.lightGrey,
+                fontSize: 14,
+              ),
             ),
+          
+          // Image preview
           if (comment.imageUrl.isNotEmpty) ...[
             const SizedBox(height: 8),
             Container(
@@ -879,6 +903,11 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                   },
                 ),
               ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              comment.fileName.isNotEmpty ? comment.fileName : 'Imagen adjunta',
+              style: const TextStyle(color: AppTheme.grey, fontSize: 11),
             ),
           ],
         ],
@@ -909,7 +938,16 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           ),
           TextButton(
             onPressed: () async {
-              if (editController.text.trim().isEmpty) return;
+              if (editController.text.trim().isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('El comentario no puede estar vacío'),
+                    backgroundColor: AppTheme.darkRed,
+                  ),
+                );
+                return;
+              }
+              
               Navigator.pop(context);
               
               final result = await _authService.editComment(
@@ -918,12 +956,21 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               );
               
               if (result['success'] == true) {
-                _loadComments();
+                _refreshTaskData(); // Reload data after editing
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
                       content: Text('Comentario editado exitosamente'),
                       backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              } else {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(result['message'] ?? 'Error al editar comentario'),
+                      backgroundColor: AppTheme.darkRed,
                     ),
                   );
                 }

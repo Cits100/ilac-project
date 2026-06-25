@@ -174,6 +174,44 @@ public class IlacController {
     }
 
     /**
+     * Obtener detalle completo de tarea (comentarios + estado)
+     * POST /api/task-detail
+     * Header: Authorization: Bearer <token>
+     * Body: { "taskId": "123456" }
+     * Retorna: comentarios + estado de la tarea
+     */
+    @PostMapping("/task-detail")
+    public ResponseEntity<Map<String, Object>> getTaskDetail(@RequestBody TokenRequest request,
+                                                              HttpServletRequest httpRequest) {
+        SessionService.UserSession session = getSessionFromRequest(httpRequest);
+        logger.info("POST /api/task-detail - Usuario: {} - Tarea: {}", session.getIdentity(), request.getTaskId());
+
+        try {
+            // Obtener comentarios
+            var comments = workOrderService.getTaskComments(request.getTaskId(), session.getIdentity());
+            
+            // Obtener estado de la tarea
+            var taskStatus = workOrderService.getTaskStatus(request.getTaskId(), session.getIdentity());
+
+            logger.info("Detalle obtenido - Tarea: {} - Comentarios: {} - Estado: {}", 
+                    request.getTaskId(), comments.size(), taskStatus.get("status"));
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "taskId", request.getTaskId(),
+                    "comments", comments,
+                    "status", taskStatus
+            ));
+        } catch (Exception e) {
+            logger.error("Error al obtener detalle: {} - Error: {}", request.getTaskId(), e.getMessage(), e);
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "message", "Error al obtener detalle: " + e.getMessage()
+            ));
+        }
+    }
+
+    /**
      * Agregar comentario a una tarea
      * POST /api/comment
      * Header: Authorization: Bearer <token>

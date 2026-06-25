@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import '../../utils/app_theme.dart';
 import '../../models/work_order.dart';
+import '../../services/auth_service.dart';
 import '../task/task_detail_screen.dart';
 
-class TaskListScreen extends StatelessWidget {
+class TaskListScreen extends StatefulWidget {
   final WorkOrder workOrder;
 
   const TaskListScreen({
@@ -12,46 +13,107 @@ class TaskListScreen extends StatelessWidget {
   });
 
   @override
+  State<TaskListScreen> createState() => _TaskListScreenState();
+}
+
+class _TaskListScreenState extends State<TaskListScreen> {
+  final AuthService _authService = AuthService();
+  late List<Task> _tasks;
+  bool _isRefreshing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _tasks = List.from(widget.workOrder.tasks);
+  }
+
+  Future<void> _refreshTasks() async {
+    setState(() {
+      _isRefreshing = true;
+    });
+
+    try {
+      // Refresh from local database
+      final orders = widget.workOrder.type == 'team'
+          ? await _authService.getTeamWorkOrders()
+          : widget.workOrder.type == 'new'
+              ? await _authService.getNewWorkOrders()
+              : await _authService.getPersonalWorkOrders();
+
+      // Find current work order and update tasks
+      for (var order in orders) {
+        if (order.id == widget.workOrder.id) {
+          if (mounted) {
+            setState(() {
+              _tasks = order.tasks;
+            });
+          }
+          break;
+        }
+      }
+    } catch (e) {
+      // Silent fail
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isRefreshing = false;
+        });
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('${workOrder.tag} - Tareas'),
+        title: Text('${widget.workOrder.tag} - Tareas'),
       ),
-      body: workOrder.tasks.isEmpty
-          ? const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
+      body: RefreshIndicator(
+        onRefresh: _refreshTasks,
+        color: AppTheme.primaryRed,
+        child: _tasks.isEmpty
+            ? ListView(
                 children: [
-                  Icon(
-                    Icons.task_outlined,
-                    size: 64,
-                    color: AppTheme.grey,
-                  ),
-                  SizedBox(height: 16),
-                  Text(
-                    'No hay tareas en esta orden',
-                    style: TextStyle(
-                      color: AppTheme.grey,
-                      fontSize: 18,
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.7,
+                    child: const Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.task_outlined,
+                            size: 64,
+                            color: AppTheme.grey,
+                          ),
+                          SizedBox(height: 16),
+                          Text(
+                            'No hay tareas en esta orden',
+                            style: TextStyle(
+                              color: AppTheme.grey,
+                              fontSize: 18,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ],
+              )
+            : ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: _tasks.length,
+                itemBuilder: (context, index) {
+                  final task = _tasks[index];
+                  return _buildTaskCard(context, task);
+                },
               ),
-            )
-          : ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: workOrder.tasks.length,
-              itemBuilder: (context, index) {
-                final task = workOrder.tasks[index];
-                return _buildTaskCard(context, task);
-              },
-            ),
+      ),
     );
   }
 
   Widget _buildTaskCard(BuildContext context, Task task) {
     final isCompleted = task.status == 'completed';
-    final isNewTask = workOrder.type == 'new';
+    final isNewTask = widget.workOrder.type == 'new';
     
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -62,13 +124,13 @@ class TaskListScreen extends StatelessWidget {
             MaterialPageRoute(
               builder: (_) => TaskDetailScreen(
                 task: task,
-                taskType: workOrder.type,
+                taskType: widget.workOrder.type,
               ),
             ),
           );
-          // If result is true, refresh the page
-          if (result == true && context.mounted) {
-            Navigator.pop(context, true);
+          // Refresh tasks when coming back
+          if (result == true && mounted) {
+            _refreshTasks();
           }
         },
         borderRadius: BorderRadius.circular(12),
@@ -223,16 +285,40 @@ class TaskListScreen extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
                     TextButton.icon(
-                      onPressed: () {
-                        // Navigate to detail for accept/reject
+                      onPressed: () async {
+                        // Navigate to detail for accept
+                        final result = await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => TaskDetailScreen(
+                              task: task,
+                              taskType: widget.workOrder.type,
+                            ),
+                          ),
+                        );
+                        if (result == true && mounted) {
+                          _refreshTasks();
+                        }
                       },
                       icon: const Icon(Icons.check, size: 16, color: Colors.green),
                       label: const Text('Aceptar', style: TextStyle(color: Colors.green)),
                     ),
                     const SizedBox(width: 8),
                     TextButton.icon(
-                      onPressed: () {
+                      onPressed: () async {
                         // Navigate to detail for reject
+                        final result = await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => TaskDetailScreen(
+                              task: task,
+                              taskType: widget.workOrder.type,
+                            ),
+                          ),
+                        );
+                        if (result == true && mounted) {
+                          _refreshTasks();
+                        }
                       },
                       icon: const Icon(Icons.close, size: 16, color: AppTheme.lightRed),
                       label: const Text('Rechazar', style: TextStyle(color: AppTheme.lightRed)),

@@ -143,6 +143,47 @@ public class WorkOrderService {
     }
 
     /**
+     * Obtener estado actual de una tarea
+     * Retorna: status (completed/pending), statusText
+     */
+    public Map<String, String> getTaskStatus(String taskId, String identity) {
+        try {
+            logger.info("Obteniendo estado de tarea: {} - Usuario: {}", taskId, identity);
+            Map<String, String> cookies = getCookiesForUser(identity);
+            String taskUrl = ilacClient.buildUrl("/engineer-task-detail-" + taskId);
+            Document doc = ilacClient.getPage(taskUrl, cookies);
+
+            Map<String, String> status = new HashMap<>();
+
+            // Verificar si la tarea tiene el badge "Completado"
+            Element statusBadge = doc.selectFirst(".task-order-number");
+            if (statusBadge != null) {
+                String statusText = statusBadge.text().trim();
+                if ("Completado".equals(statusText)) {
+                    status.put("status", "completed");
+                    status.put("statusText", "Completado");
+                } else {
+                    status.put("status", "pending");
+                    status.put("statusText", statusText);
+                }
+            } else {
+                status.put("status", "unknown");
+                status.put("statusText", "Desconocido");
+            }
+
+            // Verificar si existe el enlace "Marcar como realizada"
+            Element markDoneLink = findMarkDoneLink(doc, taskId);
+            status.put("canComplete", markDoneLink != null ? "true" : "false");
+
+            logger.info("Estado de tarea: {} - Status: {}", taskId, status.get("status"));
+            return status;
+        } catch (Exception e) {
+            logger.error("Error al obtener estado de tarea: {} - Error: {}", taskId, e.getMessage(), e);
+            return Map.of("status", "unknown", "statusText", "Desconocido", "canComplete", "false");
+        }
+    }
+
+    /**
      * Obtener service ID para comentarios
      */
     public String getServiceId(String taskId, String identity) {

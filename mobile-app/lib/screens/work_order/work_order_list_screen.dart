@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import '../../utils/app_theme.dart';
 import '../../models/work_order.dart';
+import '../../services/auth_service.dart';
 import '../task/task_list_screen.dart';
 
-class WorkOrderListScreen extends StatelessWidget {
+class WorkOrderListScreen extends StatefulWidget {
   final String title;
   final List<WorkOrder> workOrders;
   final String type;
@@ -16,40 +17,100 @@ class WorkOrderListScreen extends StatelessWidget {
   });
 
   @override
+  State<WorkOrderListScreen> createState() => _WorkOrderListScreenState();
+}
+
+class _WorkOrderListScreenState extends State<WorkOrderListScreen> {
+  final AuthService _authService = AuthService();
+  late List<WorkOrder> _workOrders;
+  bool _isRefreshing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _workOrders = List.from(widget.workOrders);
+  }
+
+  Future<void> _refreshWorkOrders() async {
+    setState(() {
+      _isRefreshing = true;
+    });
+
+    try {
+      List<WorkOrder> orders;
+      switch (widget.type) {
+        case 'new':
+          orders = await _authService.getNewWorkOrders();
+          break;
+        case 'team':
+          orders = await _authService.getTeamWorkOrders();
+          break;
+        default:
+          orders = await _authService.getPersonalWorkOrders();
+      }
+
+      if (mounted) {
+        setState(() {
+          _workOrders = orders;
+        });
+      }
+    } catch (e) {
+      // Silent fail
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isRefreshing = false;
+        });
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(title),
+        title: Text(widget.title),
       ),
-      body: workOrders.isEmpty
-          ? const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
+      body: RefreshIndicator(
+        onRefresh: _refreshWorkOrders,
+        color: AppTheme.primaryRed,
+        child: _workOrders.isEmpty
+            ? ListView(
                 children: [
-                  Icon(
-                    Icons.assignment_outlined,
-                    size: 64,
-                    color: AppTheme.grey,
-                  ),
-                  SizedBox(height: 16),
-                  Text(
-                    'No hay órdenes de trabajo',
-                    style: TextStyle(
-                      color: AppTheme.grey,
-                      fontSize: 18,
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.7,
+                    child: const Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.assignment_outlined,
+                            size: 64,
+                            color: AppTheme.grey,
+                          ),
+                          SizedBox(height: 16),
+                          Text(
+                            'No hay órdenes de trabajo',
+                            style: TextStyle(
+                              color: AppTheme.grey,
+                              fontSize: 18,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ],
+              )
+            : ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: _workOrders.length,
+                itemBuilder: (context, index) {
+                  final order = _workOrders[index];
+                  return _buildWorkOrderCard(context, order);
+                },
               ),
-            )
-          : ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: workOrders.length,
-              itemBuilder: (context, index) {
-                final order = workOrders[index];
-                return _buildWorkOrderCard(context, order);
-              },
-            ),
+      ),
     );
   }
 
@@ -57,8 +118,8 @@ class WorkOrderListScreen extends StatelessWidget {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: InkWell(
-        onTap: () {
-          Navigator.push(
+        onTap: () async {
+          final result = await Navigator.push(
             context,
             MaterialPageRoute(
               builder: (_) => TaskListScreen(
@@ -66,6 +127,10 @@ class WorkOrderListScreen extends StatelessWidget {
               ),
             ),
           );
+          // Refresh when coming back if tasks were modified
+          if (result == true && mounted) {
+            _refreshWorkOrders();
+          }
         },
         borderRadius: BorderRadius.circular(12),
         child: Padding(

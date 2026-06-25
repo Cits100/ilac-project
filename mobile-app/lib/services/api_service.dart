@@ -191,6 +191,23 @@ class ApiService {
     }
   }
 
+  Future<Map<String, dynamic>> getTaskDetail(String token, String taskId) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/task-detail'),
+        headers: _authHeaders(token),
+        body: jsonEncode({'taskId': taskId}),
+      );
+
+      return _parseResponse(response);
+    } catch (e) {
+      return {
+        'success': false,
+        'message': 'Error de conexión: $e',
+      };
+    }
+  }
+
   Future<Map<String, dynamic>> editComment(String token, String commentId, String comment) async {
     try {
       final response = await http.post(
