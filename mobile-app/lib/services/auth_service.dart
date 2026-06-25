@@ -1,6 +1,7 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../services/api_service.dart';
 import '../services/database_service.dart';
+import '../services/connectivity_service.dart';
 import '../models/work_order.dart';
 
 class AuthService {
@@ -41,6 +42,9 @@ class AuthService {
       await _dbService.insertWorkOrders(newOrders);
       await _dbService.insertWorkOrders(teamOrders);
       await _dbService.insertWorkOrders(myOrders);
+
+      // Procesar cola pendiente después del login
+      _processQueueAfterLogin();
     }
 
     return result;
@@ -60,33 +64,84 @@ class AuthService {
       _sessionToken = token;
 
       // Intentar refrescar datos con el token
-      // Si el token expiró, el login fallará y deberá hacer login manual
+      final result = await _apiService.refreshData(token);
+      
+      if (result['success'] == true) {
+        // Token válido, actualizar datos
+        _updateLocalData(result);
+        return true;
+      } else if (result['errorType'] == 'session_expired') {
+        // Token expirado, limpiar sesión pero mantener cola
+        _sessionToken = null;
+        await _secureStorage.delete(key: 'session_token');
+        return false;
+      }
+
+      // Otro error, intentar usar datos cacheados
       return true;
     } catch (e) {
-      await logout();
+      // Error de conexión, intentar usar datos cacheados
+      final identity = await _secureStorage.read(key: 'identity');
+      if (identity != null) {
+        _currentIdentity = identity;
+        return true;
+      }
       return false;
     }
   }
 
-  /// Refrescar datos del dashboard
+  /// Refrescar datos usando el token actual
   Future<Map<String, dynamic>> refreshData() async {
-    if (_currentIdentity == null) {
-      return {'success': false, 'message': 'No hay sesión activa'};
+    if (_sessionToken == null) {
+      return {
+        'success': false,
+        'message': 'No hay sesión activa',
+        'errorType': 'session_expired'
+      };
     }
 
-    // Para refrescar, necesitamos hacer login de nuevo
-    // porque el backend no tiene endpoint de refresh con token
-    final identity = await _secureStorage.read(key: 'identity');
-    if (identity == null) {
-      return {'success': false, 'message': 'No hay credenciales guardadas'};
+    final result = await _apiService.refreshData(_sessionToken!);
+
+    if (result['success'] == true) {
+      // Actualizar token si el backend lo renueva
+      if (result['sessionToken'] != null) {
+        _sessionToken = result['sessionToken'];
+        await _secureStorage.write(key: 'session_token', value: _sessionToken);
+      }
+
+      // Actualizar datos locales
+      _updateLocalData(result);
+    } else if (result['errorType'] == 'session_expired' || 
+               result['errorType'] == 'auth') {
+      // Sesión expirada - limpiar pero NO borrar cola
+      _sessionToken = null;
+      await _secureStorage.delete(key: 'session_token');
+      // NO llamar a logout() completo para mantener la cola
     }
 
-    // El usuario debe hacer login manual para refrescar
-    return {
-      'success': false, 
-      'message': 'Sesión expirada. Por favor, inicie sesión nuevamente.',
-      'errorType': 'session_expired'
-    };
+    return result;
+  }
+
+  /// Actualizar datos locales desde la respuesta
+  void _updateLocalData(Map<String, dynamic> result) async {
+    await _dbService.clearWorkOrders();
+    
+    List<WorkOrder> newOrders = result['newWorkOrders'] ?? [];
+    List<WorkOrder> teamOrders = result['teamWorkOrders'] ?? [];
+    List<WorkOrder> myOrders = result['myWorkOrders'] ?? [];
+    
+    await _dbService.insertWorkOrders(newOrders);
+    await _dbService.insertWorkOrders(teamOrders);
+    await _dbService.insertWorkOrders(myOrders);
+  }
+
+  /// Procesar cola después del login
+  void _processQueueAfterLogin() {
+    // El ConnectivityService procesará la cola automáticamente
+    // porque tiene acceso a AuthService y usará el token actual
+    Future.delayed(const Duration(seconds: 2), () {
+      ConnectivityService().processQueue();
+    });
   }
 
   /// Cerrar sesión
@@ -97,6 +152,7 @@ class AuthService {
     await _secureStorage.delete(key: 'identity');
     await _secureStorage.delete(key: 'session_token');
     await _dbService.clearWorkOrders();
+    // NOTA: NO limpiar la cola offline para que se pueda procesar al re-login
   }
 
   Future<List<WorkOrder>> getNewWorkOrders() async {
@@ -114,14 +170,14 @@ class AuthService {
   /// Obtener comentarios de una tarea
   Future<Map<String, dynamic>> getTaskComments(String taskId) async {
     if (_sessionToken == null) {
-      return {'success': false, 'message': 'No hay sesión activa'};
+      return {'success': false, 'message': 'No hay sesión activa', 'errorType': 'session_expired'};
     }
 
     final result = await _apiService.getTaskComments(_sessionToken!, taskId);
     
-    // Si la sesión expiró, limpiar
     if (result['errorType'] == 'session_expired') {
-      await logout();
+      _sessionToken = null;
+      await _secureStorage.delete(key: 'session_token');
     }
     
     return result;
@@ -135,7 +191,7 @@ class AuthService {
     String? imageName,
   }) async {
     if (_sessionToken == null) {
-      return {'success': false, 'message': 'No hay sesión activa'};
+      return {'success': false, 'message': 'No hay sesión activa', 'errorType': 'session_expired'};
     }
 
     final result = await _apiService.addComment(
@@ -146,9 +202,9 @@ class AuthService {
       imageName: imageName,
     );
     
-    // Si la sesión expiró, limpiar
     if (result['errorType'] == 'session_expired') {
-      await logout();
+      _sessionToken = null;
+      await _secureStorage.delete(key: 'session_token');
     }
     
     return result;
@@ -157,14 +213,14 @@ class AuthService {
   /// Editar un comentario
   Future<Map<String, dynamic>> editComment(String commentId, String comment) async {
     if (_sessionToken == null) {
-      return {'success': false, 'message': 'No hay sesión activa'};
+      return {'success': false, 'message': 'No hay sesión activa', 'errorType': 'session_expired'};
     }
 
     final result = await _apiService.editComment(_sessionToken!, commentId, comment);
     
-    // Si la sesión expiró, limpiar
     if (result['errorType'] == 'session_expired') {
-      await logout();
+      _sessionToken = null;
+      await _secureStorage.delete(key: 'session_token');
     }
     
     return result;
@@ -173,14 +229,14 @@ class AuthService {
   /// Marcar tarea como completada
   Future<Map<String, dynamic>> completeTask(String taskId) async {
     if (_sessionToken == null) {
-      return {'success': false, 'message': 'No hay sesión activa'};
+      return {'success': false, 'message': 'No hay sesión activa', 'errorType': 'session_expired'};
     }
 
     final result = await _apiService.completeTask(_sessionToken!, taskId);
     
-    // Si la sesión expiró, limpiar
     if (result['errorType'] == 'session_expired') {
-      await logout();
+      _sessionToken = null;
+      await _secureStorage.delete(key: 'session_token');
     }
     
     return result;
@@ -189,14 +245,14 @@ class AuthService {
   /// Rechazar tarea con razón
   Future<Map<String, dynamic>> rejectTask(String taskId, String reason) async {
     if (_sessionToken == null) {
-      return {'success': false, 'message': 'No hay sesión activa'};
+      return {'success': false, 'message': 'No hay sesión activa', 'errorType': 'session_expired'};
     }
 
     final result = await _apiService.rejectTask(_sessionToken!, taskId, reason);
     
-    // Si la sesión expiró, limpiar
     if (result['errorType'] == 'session_expired') {
-      await logout();
+      _sessionToken = null;
+      await _secureStorage.delete(key: 'session_token');
     }
     
     return result;
@@ -205,14 +261,14 @@ class AuthService {
   /// Aceptar tarea
   Future<Map<String, dynamic>> acceptTask(String taskId) async {
     if (_sessionToken == null) {
-      return {'success': false, 'message': 'No hay sesión activa'};
+      return {'success': false, 'message': 'No hay sesión activa', 'errorType': 'session_expired'};
     }
 
     final result = await _apiService.acceptTask(_sessionToken!, taskId);
     
-    // Si la sesión expiró, limpiar
     if (result['errorType'] == 'session_expired') {
-      await logout();
+      _sessionToken = null;
+      await _secureStorage.delete(key: 'session_token');
     }
     
     return result;

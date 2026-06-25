@@ -95,6 +95,53 @@ public class IlacController {
         }
     }
 
+    /**
+     * Refrescar datos usando el token de sesión actual
+     * POST /api/refresh
+     * Header: Authorization: Bearer <token>
+     * Retorna: datos actualizados de órdenes de trabajo
+     */
+    @PostMapping("/refresh")
+    public ResponseEntity<FullDashboardResponse> refreshData(HttpServletRequest httpRequest) {
+        SessionService.UserSession session = getSessionFromRequest(httpRequest);
+        logger.info("POST /api/refresh - Usuario: {}", session.getIdentity());
+
+        try {
+            Map<String, List<WorkOrder>> workOrders = workOrderService.getFullWorkOrders(session.getIdentity());
+
+            int newCount = workOrders.getOrDefault("newWorkOrders", List.of()).stream()
+                    .mapToInt(wo -> wo.getTasks().size()).sum();
+            int teamCount = workOrders.getOrDefault("teamWorkOrders", List.of()).stream()
+                    .mapToInt(wo -> wo.getTasks().size()).sum();
+            int myCount = workOrders.getOrDefault("myWorkOrders", List.of()).stream()
+                    .mapToInt(wo -> wo.getTasks().size()).sum();
+
+            logger.info("Refresh exitoso: {} - Nuevas: {}, Equipo: {}, Propias: {}",
+                    session.getIdentity(), newCount, teamCount, myCount);
+
+            return ResponseEntity.ok(FullDashboardResponse.builder()
+                    .success(true)
+                    .message("Datos actualizados")
+                    .sessionToken(session.getToken())
+                    .userName(session.getIdentity())
+                    .workOrders(workOrders)
+                    .build());
+        } catch (Exception e) {
+            logger.error("Error al refrescar datos: {} - Error: {}", session.getIdentity(), e.getMessage(), e);
+            return ResponseEntity.ok(FullDashboardResponse.builder()
+                    .success(false)
+                    .message("Error al actualizar datos: " + e.getMessage())
+                    .sessionToken(session.getToken())
+                    .userName(session.getIdentity())
+                    .workOrders(Map.of(
+                            "newWorkOrders", List.of(),
+                            "teamWorkOrders", List.of(),
+                            "myWorkOrders", List.of()
+                    ))
+                    .build());
+        }
+    }
+
     // ==================== ENDPOINTS PROTEGIDOS ====================
     // La autenticación se maneja automáticamente por AuthInterceptor
 

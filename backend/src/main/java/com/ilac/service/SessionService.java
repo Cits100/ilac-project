@@ -25,7 +25,7 @@ public class SessionService {
     private String baseUrl;
 
     private static final String USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-    private static final long SESSION_DURATION = 2 * 60 * 60 * 1000; // 2 hours
+    private static final long SESSION_DURATION = 24 * 60 * 60 * 1000; // 24 hours
 
     // Token -> UserSession mapping
     private final Map<String, UserSession> sessionsByToken = new ConcurrentHashMap<>();

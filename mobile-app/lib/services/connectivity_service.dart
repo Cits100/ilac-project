@@ -100,7 +100,6 @@ class ConnectivityService {
         final imageName = item['imageName'] as String?;
         final reason = item['reason'] as String?;
         final retryCount = item['retryCount'] as int;
-        final storedToken = item['sessionToken'] as String?;
 
         // Si ya falló 3 veces, notificar y no reintentar más
         if (retryCount >= 3) {
@@ -109,13 +108,12 @@ class ConnectivityService {
           continue;
         }
 
-        // Usar token almacenado o token actual
-        final tokenToUse = storedToken ?? _authService.currentSessionToken;
+        // Usar token actual (no el almacenado en la cola)
+        final tokenToUse = _authService.currentSessionToken;
         
         if (tokenToUse == null) {
-          // No hay token disponible, marcar como error
-          await _dbService.updateQueueItemError(id, 'No hay sesión activa');
-          await _dbService.incrementRetryCount(id);
+          // No hay sesión activa, no procesar (se procesará al re-login)
+          print('No hay sesión activa, saltando acción: $actionType para tarea $taskId');
           continue;
         }
 

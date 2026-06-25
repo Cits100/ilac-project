@@ -89,6 +89,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     if (result['success'] == true) {
       await _loadData();
+    } else if (result['errorType'] == 'session_expired') {
+      // Sesión expirada - redirigir a login
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Sesión expirada. Por favor, inicie sesión nuevamente.'),
+            backgroundColor: AppTheme.darkRed,
+            duration: Duration(seconds: 3),
+          ),
+        );
+        // Esperar un momento para que se vea el mensaje
+        await Future.delayed(const Duration(seconds: 1));
+        if (mounted) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const LoginScreen()),
+          );
+        }
+      }
     } else {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

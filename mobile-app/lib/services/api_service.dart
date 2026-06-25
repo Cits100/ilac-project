@@ -30,73 +30,52 @@ class ApiService {
     }
   }
 
+  /// Crear headers con token de autorización
+  Map<String, String> _authHeaders(String token) {
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer $token',
+    };
+  }
+
+  /// Crear headers sin autorización
+  Map<String, String> get _publicHeaders => {
+    'Content-Type': 'application/json',
+  };
+
+  // ==================== ENDPOINTS PÚBLICOS ====================
+
   Future<Map<String, dynamic>> login(String identity, String credential) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/dashboard'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _publicHeaders,
         body: jsonEncode({
           'identity': identity,
           'credential': credential,
         }),
       );
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['success'] == true) {
-          List<WorkOrder> newOrders = [];
-          List<WorkOrder> teamOrders = [];
-          List<WorkOrder> myOrders = [];
+      return _parseDashboardResponse(response);
+    } catch (e) {
+      return {
+        'success': false,
+        'message': 'Error de conexión: $e',
+        'errorType': 'connection',
+      };
+    }
+  }
 
-          if (data['workOrders'] != null) {
-            if (data['workOrders']['newWorkOrders'] != null) {
-              newOrders = (data['workOrders']['newWorkOrders'] as List)
-                  .map((o) => WorkOrder.fromJson(o, 'new'))
-                  .toList();
-            }
-            if (data['workOrders']['teamWorkOrders'] != null) {
-              teamOrders = (data['workOrders']['teamWorkOrders'] as List)
-                  .map((o) => WorkOrder.fromJson(o, 'team'))
-                  .toList();
-            }
-            if (data['workOrders']['myWorkOrders'] != null) {
-              myOrders = (data['workOrders']['myWorkOrders'] as List)
-                  .map((o) => WorkOrder.fromJson(o, 'personal'))
-                  .toList();
-            }
-          }
+  // ==================== ENDPOINTS PROTEGIDOS ====================
 
-          return {
-            'success': true,
-            'message': data['message'],
-            'sessionToken': data['sessionToken'],
-            'userName': data['userName'],
-            'newWorkOrders': newOrders,
-            'teamWorkOrders': teamOrders,
-            'myWorkOrders': myOrders,
-          };
-        } else {
-          return {
-            'success': false,
-            'message': data['message'] ?? 'Error de inicio de sesión',
-          };
-        }
-      } else {
-        String message = 'Error del servidor: ${response.statusCode}';
-        try {
-          final body = jsonDecode(response.body);
-          if (body['message'] != null) message = body['message'];
-        } catch (_) {}
+  Future<Map<String, dynamic>> refreshData(String token) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/refresh'),
+        headers: _authHeaders(token),
+      );
 
-        String errorType = 'server';
-        if (response.statusCode == 401) errorType = 'auth';
-
-        return {
-          'success': false,
-          'message': message,
-          'errorType': errorType,
-        };
-      }
+      return _parseDashboardResponse(response);
     } catch (e) {
       return {
         'success': false,
@@ -115,7 +94,6 @@ class ApiService {
   }) async {
     try {
       final body = {
-        'token': token,
         'taskId': taskId,
         'comment': comment,
       };
@@ -129,24 +107,11 @@ class ApiService {
 
       final response = await http.post(
         Uri.parse('$baseUrl/comment'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _authHeaders(token),
         body: jsonEncode(body),
       );
 
-      if (response.statusCode == 200) {
-        return jsonDecode(response.body);
-      } else if (response.statusCode == 401) {
-        return {
-          'success': false,
-          'message': 'Sesión expirada',
-          'errorType': 'session_expired',
-        };
-      } else {
-        return {
-          'success': false,
-          'message': 'Error del servidor: ${response.statusCode}',
-        };
-      }
+      return _parseResponse(response);
     } catch (e) {
       return {
         'success': false,
@@ -155,34 +120,15 @@ class ApiService {
     }
   }
 
-  Future<Map<String, dynamic>> completeTask(
-    String token,
-    String taskId,
-  ) async {
+  Future<Map<String, dynamic>> completeTask(String token, String taskId) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/complete-task'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'token': token,
-          'taskId': taskId,
-        }),
+        headers: _authHeaders(token),
+        body: jsonEncode({'taskId': taskId}),
       );
 
-      if (response.statusCode == 200) {
-        return jsonDecode(response.body);
-      } else if (response.statusCode == 401) {
-        return {
-          'success': false,
-          'message': 'Sesión expirada',
-          'errorType': 'session_expired',
-        };
-      } else {
-        return {
-          'success': false,
-          'message': 'Error del servidor: ${response.statusCode}',
-        };
-      }
+      return _parseResponse(response);
     } catch (e) {
       return {
         'success': false,
@@ -191,36 +137,18 @@ class ApiService {
     }
   }
 
-  Future<Map<String, dynamic>> rejectTask(
-    String token,
-    String taskId,
-    String reason,
-  ) async {
+  Future<Map<String, dynamic>> rejectTask(String token, String taskId, String reason) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/reject-task'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _authHeaders(token),
         body: jsonEncode({
-          'token': token,
           'taskId': taskId,
           'reason': reason,
         }),
       );
 
-      if (response.statusCode == 200) {
-        return jsonDecode(response.body);
-      } else if (response.statusCode == 401) {
-        return {
-          'success': false,
-          'message': 'Sesión expirada',
-          'errorType': 'session_expired',
-        };
-      } else {
-        return {
-          'success': false,
-          'message': 'Error del servidor: ${response.statusCode}',
-        };
-      }
+      return _parseResponse(response);
     } catch (e) {
       return {
         'success': false,
@@ -229,34 +157,15 @@ class ApiService {
     }
   }
 
-  Future<Map<String, dynamic>> acceptTask(
-    String token,
-    String taskId,
-  ) async {
+  Future<Map<String, dynamic>> acceptTask(String token, String taskId) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/accept-task'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'token': token,
-          'taskId': taskId,
-        }),
+        headers: _authHeaders(token),
+        body: jsonEncode({'taskId': taskId}),
       );
 
-      if (response.statusCode == 200) {
-        return jsonDecode(response.body);
-      } else if (response.statusCode == 401) {
-        return {
-          'success': false,
-          'message': 'Sesión expirada',
-          'errorType': 'session_expired',
-        };
-      } else {
-        return {
-          'success': false,
-          'message': 'Error del servidor: ${response.statusCode}',
-        };
-      }
+      return _parseResponse(response);
     } catch (e) {
       return {
         'success': false,
@@ -265,34 +174,15 @@ class ApiService {
     }
   }
 
-  Future<Map<String, dynamic>> getTaskComments(
-    String token,
-    String taskId,
-  ) async {
+  Future<Map<String, dynamic>> getTaskComments(String token, String taskId) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/task-comments'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'token': token,
-          'taskId': taskId,
-        }),
+        headers: _authHeaders(token),
+        body: jsonEncode({'taskId': taskId}),
       );
 
-      if (response.statusCode == 200) {
-        return jsonDecode(response.body);
-      } else if (response.statusCode == 401) {
-        return {
-          'success': false,
-          'message': 'Sesión expirada',
-          'errorType': 'session_expired',
-        };
-      } else {
-        return {
-          'success': false,
-          'message': 'Error del servidor: ${response.statusCode}',
-        };
-      }
+      return _parseResponse(response);
     } catch (e) {
       return {
         'success': false,
@@ -301,40 +191,103 @@ class ApiService {
     }
   }
 
-  Future<Map<String, dynamic>> editComment(
-    String token,
-    String commentId,
-    String comment,
-  ) async {
+  Future<Map<String, dynamic>> editComment(String token, String commentId, String comment) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/edit-comment'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _authHeaders(token),
         body: jsonEncode({
-          'token': token,
           'commentId': commentId,
           'comment': comment,
         }),
       );
 
-      if (response.statusCode == 200) {
-        return jsonDecode(response.body);
-      } else if (response.statusCode == 401) {
-        return {
-          'success': false,
-          'message': 'Sesión expirada',
-          'errorType': 'session_expired',
-        };
-      } else {
-        return {
-          'success': false,
-          'message': 'Error del servidor: ${response.statusCode}',
-        };
-      }
+      return _parseResponse(response);
     } catch (e) {
       return {
         'success': false,
         'message': 'Error de conexión: $e',
+      };
+    }
+  }
+
+  // ==================== PARSERS ====================
+
+  Map<String, dynamic> _parseDashboardResponse(http.Response response) {
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      if (data['success'] == true) {
+        List<WorkOrder> newOrders = [];
+        List<WorkOrder> teamOrders = [];
+        List<WorkOrder> myOrders = [];
+
+        if (data['workOrders'] != null) {
+          if (data['workOrders']['newWorkOrders'] != null) {
+            newOrders = (data['workOrders']['newWorkOrders'] as List)
+                .map((o) => WorkOrder.fromJson(o, 'new'))
+                .toList();
+          }
+          if (data['workOrders']['teamWorkOrders'] != null) {
+            teamOrders = (data['workOrders']['teamWorkOrders'] as List)
+                .map((o) => WorkOrder.fromJson(o, 'team'))
+                .toList();
+          }
+          if (data['workOrders']['myWorkOrders'] != null) {
+            myOrders = (data['workOrders']['myWorkOrders'] as List)
+                .map((o) => WorkOrder.fromJson(o, 'personal'))
+                .toList();
+          }
+        }
+
+        return {
+          'success': true,
+          'message': data['message'],
+          'sessionToken': data['sessionToken'],
+          'userName': data['userName'],
+          'newWorkOrders': newOrders,
+          'teamWorkOrders': teamOrders,
+          'myWorkOrders': myOrders,
+        };
+      } else {
+        return {
+          'success': false,
+          'message': data['message'] ?? 'Error desconocido',
+        };
+      }
+    } else if (response.statusCode == 401) {
+      return {
+        'success': false,
+        'message': 'Sesión expirada',
+        'errorType': 'session_expired',
+      };
+    } else {
+      String message = 'Error del servidor: ${response.statusCode}';
+      try {
+        final body = jsonDecode(response.body);
+        if (body['message'] != null) message = body['message'];
+      } catch (_) {}
+
+      return {
+        'success': false,
+        'message': message,
+        'errorType': 'server',
+      };
+    }
+  }
+
+  Map<String, dynamic> _parseResponse(http.Response response) {
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else if (response.statusCode == 401) {
+      return {
+        'success': false,
+        'message': 'Sesión expirada',
+        'errorType': 'session_expired',
+      };
+    } else {
+      return {
+        'success': false,
+        'message': 'Error del servidor: ${response.statusCode}',
       };
     }
   }
