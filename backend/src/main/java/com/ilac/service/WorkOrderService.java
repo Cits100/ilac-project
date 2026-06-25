@@ -260,6 +260,9 @@ public class WorkOrderService {
 
     /**
      * Marcar tarea como completada
+     * 
+     * El JavaScript de ILAC envía: $.post(path, {values: [{id: jobId}]})
+     * Formato correcto: values[0][id]=taskId
      */
     public boolean markTaskAsCompleted(String taskId, String identity) {
         try {
@@ -282,15 +285,11 @@ public class WorkOrderService {
             String href = markDoneLink.attr("href");
             String fullUrl = ilacClient.buildUrl(href);
 
-            // Obtener CSRF token
-            String csrfToken = ilacClient.extractCsrfToken(doc);
-            if (csrfToken == null) csrfToken = "";
+            // El formato correcto según ilac.js es: values[0][id]=taskId
+            Map<String, String> formData = new HashMap<>();
+            formData.put("values[0][id]", taskId);
 
-            // Enviar POST con taskId
-            Map<String, String> formData = Map.of(
-                    "job", taskId,
-                    "csrf", csrfToken
-            );
+            logger.debug("Enviando POST a: {} con values[0][id]={}", fullUrl, taskId);
 
             Connection.Response response = ilacClient.postForm(fullUrl, cookies, formData);
 

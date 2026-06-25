@@ -110,7 +110,7 @@ class AuthService {
       }
 
       // Actualizar datos locales
-      _updateLocalData(result);
+      await _updateLocalData(result);
     } else if (result['errorType'] == 'session_expired' || 
                result['errorType'] == 'auth') {
       // Sesión expirada - limpiar pero NO borrar cola
@@ -123,7 +123,7 @@ class AuthService {
   }
 
   /// Actualizar datos locales desde la respuesta
-  void _updateLocalData(Map<String, dynamic> result) async {
+  Future<void> _updateLocalData(Map<String, dynamic> result) async {
     await _dbService.clearWorkOrders();
     
     List<WorkOrder> newOrders = result['newWorkOrders'] ?? [];
