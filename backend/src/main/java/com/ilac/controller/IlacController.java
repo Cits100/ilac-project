@@ -260,6 +260,48 @@ public class IlacController {
     }
 
     /**
+     * Edit a comment
+     * POST /api/edit-comment
+     * Body: { "identity", "credential", "commentId", "comment" }
+     */
+    @PostMapping("/edit-comment")
+    public ResponseEntity<Map<String, Object>> editComment(@RequestBody Map<String, String> request) {
+        String identity = request.get("identity");
+        String credential = request.get("credential");
+        String commentId = request.get("commentId");
+        String commentText = request.get("comment");
+        
+        logger.info("POST /api/edit-comment - Usuario: {} - Comentario: {}", identity, commentId);
+        
+        LoginRequest loginRequest = new LoginRequest(identity, credential);
+        LoginResponse loginResult = sessionService.login(loginRequest);
+
+        if (!loginResult.isSuccess()) {
+            logger.warn("Login fallido en /api/edit-comment - Usuario: {}", identity);
+            return ResponseEntity.status(401).body(Map.of(
+                    "success", false,
+                    "message", "Falló inicio de sesión: " + loginResult.getMessage()
+            ));
+        }
+
+        boolean result = workOrderService.editComment(commentId, commentText, identity);
+
+        if (result) {
+            logger.info("Comentario editado exitosamente - Usuario: {} - Comentario: {}", identity, commentId);
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "Comentario editado exitosamente"
+            ));
+        } else {
+            logger.error("Error al editar comentario - Usuario: {} - Comentario: {}", identity, commentId);
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "message", "Error al editar comentario"
+            ));
+        }
+    }
+
+    /**
      * Mark a task as completed
      * POST /api/complete-task
      */

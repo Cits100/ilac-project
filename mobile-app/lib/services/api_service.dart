@@ -262,4 +262,38 @@ class ApiService {
       };
     }
   }
+
+  Future<Map<String, dynamic>> editComment(
+    String identity,
+    String credential,
+    String commentId,
+    String comment,
+  ) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/edit-comment'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'identity': identity,
+          'credential': credential,
+          'commentId': commentId,
+          'comment': comment,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        return {
+          'success': false,
+          'message': 'Error del servidor: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      return {
+        'success': false,
+        'message': 'Error de conexión: $e',
+      };
+    }
+  }
 }

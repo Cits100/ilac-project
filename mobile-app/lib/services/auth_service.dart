@@ -218,4 +218,17 @@ class AuthService {
       taskId,
     );
   }
+
+  Future<Map<String, dynamic>> editComment(String commentId, String comment) async {
+    if (_currentIdentity == null || _currentCredential == null) {
+      return {'success': false, 'message': 'No hay sesión activa'};
+    }
+
+    return await _apiService.editComment(
+      _currentIdentity!,
+      _currentCredential!,
+      commentId,
+      comment,
+    );
+  }
 }

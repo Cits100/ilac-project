@@ -1226,4 +1226,100 @@ public class WorkOrderService {
             return false;
         }
     }
+
+    /**
+     * Edit an existing comment
+     * The edit page returns a form similar to create, but with existing data
+     */
+    public boolean editComment(String commentId, String newText, String identity) {
+        try {
+            logger.info("Editando comentario: {} - Usuario: {}", commentId, identity);
+            
+            Map<String, String> cookies = sessionService.getCookies(identity);
+            if (cookies == null) {
+                logger.error("No hay sesión activa para usuario: {}", identity);
+                throw new RuntimeException("Not logged in");
+            }
+
+            // Get the edit page to get CSRF token and current data
+            String editUrl = baseUrl + "/service-remark-edit-" + commentId;
+            logger.debug("Obteniendo página de edición: {}", editUrl);
+            
+            Document doc = Jsoup.connect(editUrl)
+                    .userAgent(USER_AGENT)
+                    .cookies(cookies)
+                    .timeout(15000)
+                    .ignoreContentType(true)
+                    .get();
+
+            // Extract CSRF token
+            String html = doc.html();
+            String csrfToken = "";
+            
+            // Try Unicode escaped pattern
+            int csrfIndex = html.indexOf("name=\\u0022csrf\\u0022 value=\\u0022");
+            if (csrfIndex > 0) {
+                int start = csrfIndex + "name=\\u0022csrf\\u0022 value=\\u0022".length();
+                int end = html.indexOf("\\u0022", start);
+                if (end > start) {
+                    csrfToken = html.substring(start, end);
+                }
+            }
+            
+            // Try escaped pattern
+            if (csrfToken.isEmpty()) {
+                csrfIndex = html.indexOf("name=\\\"csrf\\\" value=\\\"");
+                if (csrfIndex > 0) {
+                    int start = csrfIndex + "name=\\\"csrf\\\" value=\\\"".length();
+                    int end = html.indexOf("\\\"", start);
+                    if (end > start) {
+                        csrfToken = html.substring(start, end);
+                    }
+                }
+            }
+            
+            // Try unescaped pattern
+            if (csrfToken.isEmpty()) {
+                csrfIndex = html.indexOf("name=\"csrf\" value=\"");
+                if (csrfIndex > 0) {
+                    int start = csrfIndex + "name=\"csrf\" value=\"".length();
+                    int end = html.indexOf("\"", start);
+                    if (end > start) {
+                        csrfToken = html.substring(start, end);
+                    }
+                }
+            }
+
+            if (csrfToken.isEmpty()) {
+                logger.warn("No se encontró token CSRF para edición de comentario: {}", commentId);
+            }
+
+            // Submit the edit form
+            logger.debug("Enviando formulario de edición");
+            Connection.Response response = Jsoup.connect(editUrl)
+                    .method(Connection.Method.POST)
+                    .userAgent(USER_AGENT)
+                    .cookies(cookies)
+                    .data("csrf", csrfToken)
+                    .data("serviceRemark[text]", newText)
+                    .data("serviceRemark[id]", commentId)
+                    .data("submit", "Guardar")
+                    .timeout(15000)
+                    .ignoreContentType(true)
+                    .ignoreHttpErrors(true)
+                    .execute();
+
+            boolean success = response.statusCode() == 200 || response.statusCode() == 302;
+            if (success) {
+                logger.info("Comentario editado exitosamente: {} - Status: {}", commentId, response.statusCode());
+            } else {
+                logger.error("Error al editar comentario: {} - Status: {}", commentId, response.statusCode());
+            }
+            return success;
+        } catch (Exception e) {
+            logger.error("Excepción al editar comentario: {} - Error: {}", commentId, e.getMessage(), e);
+            e.printStackTrace();
+            return false;
+        }
+    }
 }

@@ -166,6 +166,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         setState(() {
           _selectedImage = null;
         });
+        _loadComments(); // Reload comments after adding
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -619,48 +620,63 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               ),
             ],
 
-            // Comments list section
-            if (_comments.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(Icons.comment, color: AppTheme.primaryRed, size: 20),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Comentarios (${_comments.length})',
-                            style: const TextStyle(
-                              color: AppTheme.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
+            // Comments list section - always show
+            const SizedBox(height: 16),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.comment, color: AppTheme.primaryRed, size: 20),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Comentarios (${_comments.length})',
+                          style: const TextStyle(
+                            color: AppTheme.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
                           ),
-                          if (_isLoadingComments)
-                            const Padding(
-                              padding: EdgeInsets.only(left: 8),
-                              child: SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: AppTheme.primaryRed,
-                                ),
+                        ),
+                        if (_isLoadingComments)
+                          const Padding(
+                            padding: EdgeInsets.only(left: 8),
+                            child: SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppTheme.primaryRed,
                               ),
                             ),
-                        ],
-                      ),
-                      const Divider(color: AppTheme.darkGrey, height: 16),
+                          ),
+                        const Spacer(),
+                        IconButton(
+                          icon: const Icon(Icons.refresh, color: AppTheme.lightGrey, size: 20),
+                          onPressed: _loadComments,
+                          tooltip: 'Actualizar comentarios',
+                        ),
+                      ],
+                    ),
+                    const Divider(color: AppTheme.darkGrey, height: 16),
+                    if (_comments.isEmpty && !_isLoadingComments)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 16),
+                        child: Center(
+                          child: Text(
+                            'No hay comentarios',
+                            style: TextStyle(color: AppTheme.grey, fontSize: 14),
+                          ),
+                        ),
+                      )
+                    else
                       ..._comments.map((comment) => _buildCommentCard(comment)),
-                    ],
-                  ),
+                  ],
                 ),
               ),
-            ],
+            ),
 
             // Add comment section (not for new tasks)
             if (!isNewTask) ...[
@@ -793,6 +809,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   }
 
   Widget _buildCommentCard(TaskComment comment) {
+    // Check if comment belongs to current user (by checking author name)
+    final currentUser = _authService.currentIdentity ?? '';
+    final isOwnComment = comment.author.isNotEmpty && 
+        (comment.author.toLowerCase().contains(currentUser.split('@').first.toLowerCase()) ||
+         currentUser.toLowerCase().contains(comment.author.toLowerCase()));
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),
@@ -804,7 +826,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header with author and date
+          // Header with author, date and edit button
           Row(
             children: [
               const Icon(Icons.person, size: 16, color: AppTheme.lightGrey),
@@ -827,6 +849,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     fontSize: 11,
                   ),
                 ),
+              if (isOwnComment && comment.id.isNotEmpty)
+                IconButton(
+                  icon: const Icon(Icons.edit, size: 18, color: AppTheme.primaryRed),
+                  onPressed: () => _editComment(comment),
+                  tooltip: 'Editar comentario',
+                ),
             ],
           ),
           const SizedBox(height: 8),
@@ -846,7 +874,6 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
             const SizedBox(height: 8),
             GestureDetector(
               onTap: () {
-                // Open full image
                 _showFullImage(comment.imageUrl);
               },
               child: Container(
@@ -907,6 +934,74 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               ],
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  void _editComment(TaskComment comment) {
+    final editController = TextEditingController(text: comment.text);
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.darkGrey,
+        title: const Text('Editar Comentario', style: TextStyle(color: AppTheme.white)),
+        content: TextField(
+          controller: editController,
+          maxLines: 5,
+          decoration: const InputDecoration(
+            hintText: 'Escriba su comentario...',
+            hintStyle: TextStyle(color: AppTheme.grey),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () async {
+              if (editController.text.trim().isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('El comentario no puede estar vacío'),
+                    backgroundColor: AppTheme.darkRed,
+                  ),
+                );
+                return;
+              }
+              
+              Navigator.pop(context);
+              
+              final result = await _authService.editComment(
+                comment.id,
+                editController.text.trim(),
+              );
+              
+              if (result['success'] == true) {
+                _loadComments(); // Reload comments
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Comentario editado exitosamente'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              } else {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(result['message'] ?? 'Error al editar comentario'),
+                      backgroundColor: AppTheme.darkRed,
+                    ),
+                  );
+                }
+              }
+            },
+            child: const Text('Guardar', style: TextStyle(color: AppTheme.primaryRed)),
+          ),
         ],
       ),
     );
