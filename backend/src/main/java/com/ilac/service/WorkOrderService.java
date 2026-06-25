@@ -696,7 +696,14 @@ public class WorkOrderService {
     }
 
     /**
-     * Mark a task as completed ("Marcar como realizada")
+     * Marcar tarea como completada ("Marcar como realizada")
+     * 
+     * El enlace tiene esta estructura:
+     * <a href="/jobs-move-to-history" data-values="4510709" class="job-set-status">
+     *   Marcar como realizada
+     * </a>
+     * 
+     * Se debe hacer POST a /jobs-move-to-history con el taskId en data-values
      */
     public boolean markTaskAsCompleted(String taskId, String identity) {
         try {
@@ -719,14 +726,25 @@ public class WorkOrderService {
                     .ignoreContentType(true)
                     .get();
 
-            // Find the "Marcar como realizada" link
-            Element markDoneLink = doc.selectFirst("a[href*=mark-done], a[href*=complete], a:containsOwn(Marcar como realizada), a:containsOwn(mark as done)");
+            // Buscar el enlace "Marcar como realizada" con data-values que contenga el taskId
+            Element markDoneLink = null;
             
+            // Primero buscar por clase CSS específica
+            Elements candidates = doc.select("a.job-set-status");
+            for (Element link : candidates) {
+                String dataValues = link.attr("data-values");
+                if (dataValues.equals(taskId)) {
+                    markDoneLink = link;
+                    break;
+                }
+            }
+            
+            // Si no se encontró por clase, buscar por texto
             if (markDoneLink == null) {
-                // Try finding by text content
-                Elements links = doc.select("a");
-                for (Element link : links) {
-                    if (link.text().contains("Marcar como realizada") || link.text().contains("marcar como realizada")) {
+                for (Element link : doc.select("a")) {
+                    String text = link.text().trim();
+                    String dataValues = link.attr("data-values");
+                    if (text.contains("Marcar como realizada") && dataValues.equals(taskId)) {
                         markDoneLink = link;
                         break;
                     }
@@ -744,16 +762,27 @@ public class WorkOrderService {
                 throw new RuntimeException("Link has no href");
             }
 
+            // Construir URL completa
             String fullUrl = href.startsWith("http") ? href : baseUrl + href;
             logger.debug("URL de completar tarea: {}", fullUrl);
 
-            // Click the link
+            // Obtener token CSRF de la página
+            String csrfToken = "";
+            Element csrfElement = doc.selectFirst("input[name=csrf]");
+            if (csrfElement != null) {
+                csrfToken = csrfElement.val();
+            }
+
+            // Hacer POST con el taskId (no GET)
             Connection.Response response = Jsoup.connect(fullUrl)
-                    .method(Connection.Method.GET)
+                    .method(Connection.Method.POST)
                     .userAgent(USER_AGENT)
                     .cookies(cookies)
+                    .data("job", taskId)
+                    .data("csrf", csrfToken)
                     .timeout(15000)
                     .followRedirects(true)
+                    .ignoreContentType(true)
                     .ignoreHttpErrors(true)
                     .execute();
 

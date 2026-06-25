@@ -5,7 +5,6 @@ import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../utils/app_theme.dart';
 import '../../models/work_order.dart';
-import '../../models/task_comment.dart';
 import '../../services/auth_service.dart';
 import '../../services/connectivity_service.dart';
 
@@ -35,43 +34,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   bool _isCompleting = false;
   bool _isRejecting = false;
   bool _isAccepting = false;
-  bool _isLoadingComments = false;
-  List<TaskComment> _comments = [];
-
-  @override
-  void initState() {
-    super.initState();
-    _loadComments();
-  }
 
   @override
   void dispose() {
     _commentController.dispose();
     _rejectReasonController.dispose();
     super.dispose();
-  }
-
-  Future<void> _loadComments() async {
-    setState(() {
-      _isLoadingComments = true;
-    });
-
-    try {
-      final result = await _authService.getTaskComments(widget.task.id);
-      if (result['success'] == true && result['comments'] != null) {
-        setState(() {
-          _comments = (result['comments'] as List)
-              .map((c) => TaskComment.fromJson(c))
-              .toList();
-        });
-      }
-    } catch (e) {
-      // Error loading comments - silent fail
-    } finally {
-      setState(() {
-        _isLoadingComments = false;
-      });
-    }
   }
 
   Future<void> _pickImage() async {
@@ -166,7 +134,6 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         setState(() {
           _selectedImage = null;
         });
-        _loadComments(); // Reload comments after adding
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -620,65 +587,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               ),
             ],
 
-            // Comments list section - always show
-            const SizedBox(height: 16),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.comment, color: AppTheme.primaryRed, size: 20),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Comentarios (${_comments.length})',
-                          style: const TextStyle(
-                            color: AppTheme.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                        if (_isLoadingComments)
-                          const Padding(
-                            padding: EdgeInsets.only(left: 8),
-                            child: SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: AppTheme.primaryRed,
-                              ),
-                            ),
-                          ),
-                        const Spacer(),
-                        IconButton(
-                          icon: const Icon(Icons.refresh, color: AppTheme.lightGrey, size: 20),
-                          onPressed: _loadComments,
-                          tooltip: 'Actualizar comentarios',
-                        ),
-                      ],
-                    ),
-                    const Divider(color: AppTheme.darkGrey, height: 16),
-                    if (_comments.isEmpty && !_isLoadingComments)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 16),
-                        child: Center(
-                          child: Text(
-                            'No hay comentarios',
-                            style: TextStyle(color: AppTheme.grey, fontSize: 14),
-                          ),
-                        ),
-                      )
-                    else
-                      ..._comments.map((comment) => _buildCommentCard(comment)),
-                  ],
-                ),
-              ),
-            ),
-
-            // Add comment section (not for new tasks)
+            // Comment section (not for new tasks)
             if (!isNewTask) ...[
               const SizedBox(height: 24),
               const Text(
@@ -804,238 +713,6 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildCommentCard(TaskComment comment) {
-    // Check if comment belongs to current user (by checking author name)
-    final currentUser = _authService.currentIdentity ?? '';
-    final isOwnComment = comment.author.isNotEmpty && 
-        (comment.author.toLowerCase().contains(currentUser.split('@').first.toLowerCase()) ||
-         currentUser.toLowerCase().contains(comment.author.toLowerCase()));
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppTheme.darkGrey.withOpacity(0.5),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppTheme.grey.withOpacity(0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header with author, date and edit button
-          Row(
-            children: [
-              const Icon(Icons.person, size: 16, color: AppTheme.lightGrey),
-              const SizedBox(width: 4),
-              Expanded(
-                child: Text(
-                  comment.author,
-                  style: const TextStyle(
-                    color: AppTheme.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                  ),
-                ),
-              ),
-              if (comment.date.isNotEmpty)
-                Text(
-                  comment.date,
-                  style: const TextStyle(
-                    color: AppTheme.grey,
-                    fontSize: 11,
-                  ),
-                ),
-              if (isOwnComment && comment.id.isNotEmpty)
-                IconButton(
-                  icon: const Icon(Icons.edit, size: 18, color: AppTheme.primaryRed),
-                  onPressed: () => _editComment(comment),
-                  tooltip: 'Editar comentario',
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          
-          // Comment text
-          if (comment.text.isNotEmpty)
-            Text(
-              comment.text,
-              style: const TextStyle(
-                color: AppTheme.lightGrey,
-                fontSize: 14,
-              ),
-            ),
-          
-          // Image preview
-          if (comment.imageUrl.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            GestureDetector(
-              onTap: () {
-                _showFullImage(comment.imageUrl);
-              },
-              child: Container(
-                height: 120,
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  color: AppTheme.darkGrey,
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Image.network(
-                    comment.imageUrl,
-                    fit: BoxFit.cover,
-                    loadingBuilder: (context, child, loadingProgress) {
-                      if (loadingProgress == null) return child;
-                      return Center(
-                        child: CircularProgressIndicator(
-                          value: loadingProgress.expectedTotalBytes != null
-                              ? loadingProgress.cumulativeBytesLoaded /
-                                  loadingProgress.expectedTotalBytes!
-                              : null,
-                          color: AppTheme.primaryRed,
-                        ),
-                      );
-                    },
-                    errorBuilder: (context, error, stackTrace) {
-                      return const Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.broken_image, color: AppTheme.grey, size: 32),
-                            SizedBox(height: 4),
-                            Text(
-                              'Imagen no disponible',
-                              style: TextStyle(color: AppTheme.grey, fontSize: 12),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                const Icon(Icons.image, size: 14, color: AppTheme.grey),
-                const SizedBox(width: 4),
-                Text(
-                  comment.fileName.isNotEmpty ? comment.fileName : 'Imagen adjunta',
-                  style: const TextStyle(
-                    color: AppTheme.grey,
-                    fontSize: 11,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  void _editComment(TaskComment comment) {
-    final editController = TextEditingController(text: comment.text);
-    
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: AppTheme.darkGrey,
-        title: const Text('Editar Comentario', style: TextStyle(color: AppTheme.white)),
-        content: TextField(
-          controller: editController,
-          maxLines: 5,
-          decoration: const InputDecoration(
-            hintText: 'Escriba su comentario...',
-            hintStyle: TextStyle(color: AppTheme.grey),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar'),
-          ),
-          TextButton(
-            onPressed: () async {
-              if (editController.text.trim().isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('El comentario no puede estar vacío'),
-                    backgroundColor: AppTheme.darkRed,
-                  ),
-                );
-                return;
-              }
-              
-              Navigator.pop(context);
-              
-              final result = await _authService.editComment(
-                comment.id,
-                editController.text.trim(),
-              );
-              
-              if (result['success'] == true) {
-                _loadComments(); // Reload comments
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Comentario editado exitosamente'),
-                      backgroundColor: Colors.green,
-                    ),
-                  );
-                }
-              } else {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(result['message'] ?? 'Error al editar comentario'),
-                      backgroundColor: AppTheme.darkRed,
-                    ),
-                  );
-                }
-              }
-            },
-            child: const Text('Guardar', style: TextStyle(color: AppTheme.primaryRed)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showFullImage(String imageUrl) {
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.transparent,
-        child: GestureDetector(
-          onTap: () => Navigator.pop(context),
-          child: InteractiveViewer(
-            child: Image.network(
-              imageUrl,
-              fit: BoxFit.contain,
-              errorBuilder: (context, error, stackTrace) {
-                return const Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.broken_image, color: AppTheme.white, size: 64),
-                      SizedBox(height: 16),
-                      Text(
-                        'Error al cargar imagen',
-                        style: TextStyle(color: AppTheme.white),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
-          ),
-        ),
       ),
     );
   }
