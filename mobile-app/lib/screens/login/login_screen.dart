@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import '../../utils/app_theme.dart';
 import '../../services/auth_service.dart';
+import '../../services/api_service.dart';
 import '../dashboard/dashboard_screen.dart';
+import '../settings/settings_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -15,10 +17,21 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final AuthService _authService = AuthService();
+  final ApiService _apiService = ApiService();
   
   bool _isLoading = false;
   bool _obscurePassword = true;
   String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedUrl();
+  }
+
+  Future<void> _loadSavedUrl() async {
+    await _apiService.loadBaseUrl();
+  }
 
   @override
   void dispose() {
@@ -98,7 +111,20 @@ class _LoginScreenState extends State<LoginScreen> {
                       color: AppTheme.lightGrey,
                     ),
                   ),
-                  const SizedBox(height: 48),
+                  const SizedBox(height: 8),
+                  
+                  // Settings button
+                  TextButton.icon(
+                    onPressed: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                      );
+                    },
+                    icon: const Icon(Icons.settings, size: 16),
+                    label: const Text('Configurar servidor'),
+                  ),
+                  const SizedBox(height: 32),
 
                   // Email field
                   TextFormField(

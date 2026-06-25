@@ -40,13 +40,6 @@ class AppTheme {
         centerTitle: true,
       ),
       cardColor: darkGrey,
-      cardTheme: CardThemeData(
-        color: darkGrey,
-        elevation: 2,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
-      ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           backgroundColor: primaryRed,

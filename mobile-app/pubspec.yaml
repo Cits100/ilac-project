@@ -20,6 +20,9 @@ dependencies:
   # Secure storage for credentials
   flutter_secure_storage: ^9.0.0
   
+  # Shared preferences for settings
+  shared_preferences: ^2.2.0
+  
   # State management
   provider: ^6.1.0
   

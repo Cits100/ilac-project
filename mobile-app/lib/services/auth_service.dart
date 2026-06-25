@@ -13,24 +13,24 @@ class AuthService {
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
 
   String? _currentIdentity;
-  String? _currentCredential;
+  String? _sessionToken;
 
   String? get currentIdentity => _currentIdentity;
-  bool get isLoggedIn => _currentIdentity != null;
+  bool get isLoggedIn => _sessionToken != null;
 
+  /// Iniciar sesión y obtener token de sesión
   Future<Map<String, dynamic>> login(String identity, String credential) async {
     final result = await _apiService.login(identity, credential);
 
     if (result['success'] == true) {
       _currentIdentity = identity;
-      _currentCredential = credential;
+      _sessionToken = result['sessionToken'];
 
-      // Save session
-      await _dbService.saveSession(identity, credential);
+      // Guardar SOLO en almacenamiento seguro (NO en SQLite)
       await _secureStorage.write(key: 'identity', value: identity);
-      await _secureStorage.write(key: 'credential', value: credential);
+      await _secureStorage.write(key: 'session_token', value: _sessionToken);
 
-      // Save work orders to local DB
+      // Guardar órdenes en base de datos local
       await _dbService.clearWorkOrders();
       
       List<WorkOrder> newOrders = result['newWorkOrders'] ?? [];
@@ -45,74 +45,56 @@ class AuthService {
     return result;
   }
 
+  /// Intentar auto-login con token guardado
   Future<bool> tryAutoLogin() async {
     try {
       final identity = await _secureStorage.read(key: 'identity');
-      final credential = await _secureStorage.read(key: 'credential');
+      final token = await _secureStorage.read(key: 'session_token');
 
-      if (identity == null || credential == null) {
+      if (identity == null || token == null) {
         return false;
       }
 
       _currentIdentity = identity;
-      _currentCredential = credential;
+      _sessionToken = token;
 
-      // Try to login again to refresh data
-      final result = await _apiService.login(identity, credential);
-      
-      if (result['success'] == true) {
-        // Update local DB
-        await _dbService.clearWorkOrders();
-        
-        List<WorkOrder> newOrders = result['newWorkOrders'] ?? [];
-        List<WorkOrder> teamOrders = result['teamWorkOrders'] ?? [];
-        List<WorkOrder> myOrders = result['myWorkOrders'] ?? [];
-        
-        await _dbService.insertWorkOrders(newOrders);
-        await _dbService.insertWorkOrders(teamOrders);
-        await _dbService.insertWorkOrders(myOrders);
-        
-        return true;
-      } else {
-        // Login failed - check if it's bad credentials or a server issue
-        String errorType = result['errorType'] ?? 'auth';
-
-        if (errorType == 'auth') {
-          // Bad credentials - wipe everything
-          await logout();
-          return false;
-        }
-
-        // Server/connection error - try cached data
-        final session = await _dbService.getSession();
-        if (session != null) {
-          _currentIdentity = session['identity'];
-          _currentCredential = session['encryptedPassword'];
-          return true;
-        }
-
-        await logout();
-        return false;
-      }
+      // Intentar refrescar datos con el token
+      // Si el token expiró, el login fallará y deberá hacer login manual
+      return true;
     } catch (e) {
-      // If offline, try to use cached data
-      final session = await _dbService.getSession();
-      if (session != null) {
-        _currentIdentity = session['identity'];
-        _currentCredential = session['encryptedPassword'];
-        return true;
-      }
+      await logout();
       return false;
     }
   }
 
+  /// Refrescar datos del dashboard
+  Future<Map<String, dynamic>> refreshData() async {
+    if (_currentIdentity == null) {
+      return {'success': false, 'message': 'No hay sesión activa'};
+    }
+
+    // Para refrescar, necesitamos hacer login de nuevo
+    // porque el backend no tiene endpoint de refresh con token
+    final identity = await _secureStorage.read(key: 'identity');
+    if (identity == null) {
+      return {'success': false, 'message': 'No hay credenciales guardadas'};
+    }
+
+    // El usuario debe hacer login manual para refrescar
+    return {
+      'success': false, 
+      'message': 'Sesión expirada. Por favor, inicie sesión nuevamente.',
+      'errorType': 'session_expired'
+    };
+  }
+
+  /// Cerrar sesión
   Future<void> logout() async {
     _currentIdentity = null;
-    _currentCredential = null;
+    _sessionToken = null;
     
     await _secureStorage.delete(key: 'identity');
-    await _secureStorage.delete(key: 'credential');
-    await _dbService.clearSession();
+    await _secureStorage.delete(key: 'session_token');
     await _dbService.clearWorkOrders();
   }
 
@@ -128,107 +110,110 @@ class AuthService {
     return await _dbService.getWorkOrders('personal');
   }
 
-  Future<Map<String, dynamic>> refreshData() async {
-    if (_currentIdentity == null || _currentCredential == null) {
+  /// Obtener comentarios de una tarea
+  Future<Map<String, dynamic>> getTaskComments(String taskId) async {
+    if (_sessionToken == null) {
       return {'success': false, 'message': 'No hay sesión activa'};
     }
 
-    final result = await _apiService.login(_currentIdentity!, _currentCredential!);
-
-    if (result['success'] == true) {
-      await _dbService.clearWorkOrders();
-      
-      List<WorkOrder> newOrders = result['newWorkOrders'] ?? [];
-      List<WorkOrder> teamOrders = result['teamWorkOrders'] ?? [];
-      List<WorkOrder> myOrders = result['myWorkOrders'] ?? [];
-      
-      await _dbService.insertWorkOrders(newOrders);
-      await _dbService.insertWorkOrders(teamOrders);
-      await _dbService.insertWorkOrders(myOrders);
+    final result = await _apiService.getTaskComments(_sessionToken!, taskId);
+    
+    // Si la sesión expiró, limpiar
+    if (result['errorType'] == 'session_expired') {
+      await logout();
     }
-
+    
     return result;
   }
 
+  /// Agregar comentario a una tarea
   Future<Map<String, dynamic>> addComment(
     String taskId,
     String comment, {
     String? imageBase64,
     String? imageName,
   }) async {
-    if (_currentIdentity == null || _currentCredential == null) {
+    if (_sessionToken == null) {
       return {'success': false, 'message': 'No hay sesión activa'};
     }
 
-    return await _apiService.addComment(
-      _currentIdentity!,
-      _currentCredential!,
+    final result = await _apiService.addComment(
+      _sessionToken!,
       taskId,
       comment,
       imageBase64: imageBase64,
       imageName: imageName,
     );
-  }
-
-  Future<Map<String, dynamic>> completeTask(String taskId) async {
-    if (_currentIdentity == null || _currentCredential == null) {
-      return {'success': false, 'message': 'No hay sesión activa'};
+    
+    // Si la sesión expiró, limpiar
+    if (result['errorType'] == 'session_expired') {
+      await logout();
     }
-
-    return await _apiService.completeTask(
-      _currentIdentity!,
-      _currentCredential!,
-      taskId,
-    );
+    
+    return result;
   }
 
-  Future<Map<String, dynamic>> rejectTask(String taskId, String reason) async {
-    if (_currentIdentity == null || _currentCredential == null) {
-      return {'success': false, 'message': 'No hay sesión activa'};
-    }
-
-    return await _apiService.rejectTask(
-      _currentIdentity!,
-      _currentCredential!,
-      taskId,
-      reason,
-    );
-  }
-
-  Future<Map<String, dynamic>> acceptTask(String taskId) async {
-    if (_currentIdentity == null || _currentCredential == null) {
-      return {'success': false, 'message': 'No hay sesión activa'};
-    }
-
-    return await _apiService.acceptTask(
-      _currentIdentity!,
-      _currentCredential!,
-      taskId,
-    );
-  }
-
-  Future<Map<String, dynamic>> getTaskComments(String taskId) async {
-    if (_currentIdentity == null || _currentCredential == null) {
-      return {'success': false, 'message': 'No hay sesión activa'};
-    }
-
-    return await _apiService.getTaskComments(
-      _currentIdentity!,
-      _currentCredential!,
-      taskId,
-    );
-  }
-
+  /// Editar un comentario
   Future<Map<String, dynamic>> editComment(String commentId, String comment) async {
-    if (_currentIdentity == null || _currentCredential == null) {
+    if (_sessionToken == null) {
       return {'success': false, 'message': 'No hay sesión activa'};
     }
 
-    return await _apiService.editComment(
-      _currentIdentity!,
-      _currentCredential!,
-      commentId,
-      comment,
-    );
+    final result = await _apiService.editComment(_sessionToken!, commentId, comment);
+    
+    // Si la sesión expiró, limpiar
+    if (result['errorType'] == 'session_expired') {
+      await logout();
+    }
+    
+    return result;
+  }
+
+  /// Marcar tarea como completada
+  Future<Map<String, dynamic>> completeTask(String taskId) async {
+    if (_sessionToken == null) {
+      return {'success': false, 'message': 'No hay sesión activa'};
+    }
+
+    final result = await _apiService.completeTask(_sessionToken!, taskId);
+    
+    // Si la sesión expiró, limpiar
+    if (result['errorType'] == 'session_expired') {
+      await logout();
+    }
+    
+    return result;
+  }
+
+  /// Rechazar tarea con razón
+  Future<Map<String, dynamic>> rejectTask(String taskId, String reason) async {
+    if (_sessionToken == null) {
+      return {'success': false, 'message': 'No hay sesión activa'};
+    }
+
+    final result = await _apiService.rejectTask(_sessionToken!, taskId, reason);
+    
+    // Si la sesión expiró, limpiar
+    if (result['errorType'] == 'session_expired') {
+      await logout();
+    }
+    
+    return result;
+  }
+
+  /// Aceptar tarea
+  Future<Map<String, dynamic>> acceptTask(String taskId) async {
+    if (_sessionToken == null) {
+      return {'success': false, 'message': 'No hay sesión activa'};
+    }
+
+    final result = await _apiService.acceptTask(_sessionToken!, taskId);
+    
+    // Si la sesión expiró, limpiar
+    if (result['errorType'] == 'session_expired') {
+      await logout();
+    }
+    
+    return result;
   }
 }

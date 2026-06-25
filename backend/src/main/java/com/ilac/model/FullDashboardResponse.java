@@ -15,6 +15,7 @@ import java.util.Map;
 public class FullDashboardResponse {
     private boolean success;
     private String message;
+    private String sessionToken;
     private String userName;
     private Map<String, List<WorkOrder>> workOrders;
 }

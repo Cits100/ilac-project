@@ -110,18 +110,13 @@ class DatabaseService {
         imageName TEXT,
         reason TEXT,
         createdAt TEXT,
-        retryCount INTEGER DEFAULT 0
+        retryCount INTEGER DEFAULT 0,
+        lastError TEXT
       )
     ''');
 
-    await db.execute('''
-      CREATE TABLE user_session (
-        id INTEGER PRIMARY KEY,
-        identity TEXT,
-        encryptedPassword TEXT,
-        isLoggedIn INTEGER DEFAULT 0
-      )
-    ''');
+    // Tabla de sesión eliminada - se usa FlutterSecureStorage
+    // No almacenar credenciales en SQLite por seguridad
   }
 
   // ========== WORK ORDERS ==========
@@ -240,30 +235,28 @@ class DatabaseService {
     );
   }
 
-  // ========== USER SESSION ==========
-
-  Future<void> saveSession(String identity, String encryptedPassword) async {
+  Future<void> updateQueueItemError(int id, String error) async {
     final db = await database;
-    await db.delete('user_session');
-    await db.insert('user_session', {
-      'id': 1,
-      'identity': identity,
-      'encryptedPassword': encryptedPassword,
-      'isLoggedIn': 1,
-    });
+    await db.update(
+      'offline_queue',
+      {'lastError': error},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 
-  Future<Map<String, dynamic>?> getSession() async {
+  Future<List<Map<String, dynamic>>> getFailedQueueItems() async {
     final db = await database;
-    final List<Map<String, dynamic>> maps = await db.query('user_session');
-    if (maps.isNotEmpty) {
-      return maps.first;
-    }
-    return null;
+    return await db.query(
+      'offline_queue',
+      where: 'retryCount >= ?',
+      whereArgs: [3],
+      orderBy: 'createdAt ASC',
+    );
   }
 
-  Future<void> clearSession() async {
+  Future<void> clearFailedQueueItems() async {
     final db = await database;
-    await db.delete('user_session');
+    await db.delete('offline_queue', where: 'retryCount >= ?', whereArgs: [3]);
   }
 }

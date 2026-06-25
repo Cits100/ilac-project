@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/work_order.dart';
 
 class ApiService {
@@ -7,11 +8,27 @@ class ApiService {
   factory ApiService() => _instance;
   ApiService._internal();
 
-  // Change this to your backend URL
-  // For Android emulator use 10.0.2.2 instead of localhost
-  // For iOS simulator use localhost
-  // For real device use your computer's IP
-  static const String baseUrl = 'http://10.0.2.2:8080/api';
+  // URL base configurable - se guarda en SharedPreferences
+  String _baseUrl = 'http://10.0.2.2:8080/api';
+  
+  /// Obtener URL base actual
+  String get baseUrl => _baseUrl;
+  
+  /// Configurar URL base y guardarla
+  Future<void> setBaseUrl(String url) async {
+    _baseUrl = url;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('backend_url', url);
+  }
+  
+  /// Cargar URL base guardada
+  Future<void> loadBaseUrl() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedUrl = prefs.getString('backend_url');
+    if (savedUrl != null && savedUrl.isNotEmpty) {
+      _baseUrl = savedUrl;
+    }
+  }
 
   Future<Map<String, dynamic>> login(String identity, String credential) async {
     try {
@@ -52,6 +69,7 @@ class ApiService {
           return {
             'success': true,
             'message': data['message'],
+            'sessionToken': data['sessionToken'],
             'userName': data['userName'],
             'newWorkOrders': newOrders,
             'teamWorkOrders': teamOrders,
@@ -89,8 +107,7 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> addComment(
-    String identity,
-    String credential,
+    String token,
     String taskId,
     String comment, {
     String? imageBase64,
@@ -98,8 +115,7 @@ class ApiService {
   }) async {
     try {
       final body = {
-        'identity': identity,
-        'credential': credential,
+        'token': token,
         'taskId': taskId,
         'comment': comment,
       };
@@ -119,6 +135,12 @@ class ApiService {
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
+      } else if (response.statusCode == 401) {
+        return {
+          'success': false,
+          'message': 'Sesión expirada',
+          'errorType': 'session_expired',
+        };
       } else {
         return {
           'success': false,
@@ -134,8 +156,7 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> completeTask(
-    String identity,
-    String credential,
+    String token,
     String taskId,
   ) async {
     try {
@@ -143,14 +164,19 @@ class ApiService {
         Uri.parse('$baseUrl/complete-task'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'identity': identity,
-          'credential': credential,
+          'token': token,
           'taskId': taskId,
         }),
       );
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
+      } else if (response.statusCode == 401) {
+        return {
+          'success': false,
+          'message': 'Sesión expirada',
+          'errorType': 'session_expired',
+        };
       } else {
         return {
           'success': false,
@@ -166,8 +192,7 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> rejectTask(
-    String identity,
-    String credential,
+    String token,
     String taskId,
     String reason,
   ) async {
@@ -176,8 +201,7 @@ class ApiService {
         Uri.parse('$baseUrl/reject-task'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'identity': identity,
-          'credential': credential,
+          'token': token,
           'taskId': taskId,
           'reason': reason,
         }),
@@ -185,6 +209,12 @@ class ApiService {
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
+      } else if (response.statusCode == 401) {
+        return {
+          'success': false,
+          'message': 'Sesión expirada',
+          'errorType': 'session_expired',
+        };
       } else {
         return {
           'success': false,
@@ -200,8 +230,7 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> acceptTask(
-    String identity,
-    String credential,
+    String token,
     String taskId,
   ) async {
     try {
@@ -209,14 +238,19 @@ class ApiService {
         Uri.parse('$baseUrl/accept-task'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'identity': identity,
-          'credential': credential,
+          'token': token,
           'taskId': taskId,
         }),
       );
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
+      } else if (response.statusCode == 401) {
+        return {
+          'success': false,
+          'message': 'Sesión expirada',
+          'errorType': 'session_expired',
+        };
       } else {
         return {
           'success': false,
@@ -232,8 +266,7 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> getTaskComments(
-    String identity,
-    String credential,
+    String token,
     String taskId,
   ) async {
     try {
@@ -241,14 +274,19 @@ class ApiService {
         Uri.parse('$baseUrl/task-comments'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'identity': identity,
-          'credential': credential,
+          'token': token,
           'taskId': taskId,
         }),
       );
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
+      } else if (response.statusCode == 401) {
+        return {
+          'success': false,
+          'message': 'Sesión expirada',
+          'errorType': 'session_expired',
+        };
       } else {
         return {
           'success': false,
@@ -264,8 +302,7 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> editComment(
-    String identity,
-    String credential,
+    String token,
     String commentId,
     String comment,
   ) async {
@@ -274,8 +311,7 @@ class ApiService {
         Uri.parse('$baseUrl/edit-comment'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'identity': identity,
-          'credential': credential,
+          'token': token,
           'commentId': commentId,
           'comment': comment,
         }),
@@ -283,6 +319,12 @@ class ApiService {
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
+      } else if (response.statusCode == 401) {
+        return {
+          'success': false,
+          'message': 'Sesión expirada',
+          'errorType': 'session_expired',
+        };
       } else {
         return {
           'success': false,

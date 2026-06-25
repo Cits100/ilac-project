@@ -14,5 +14,6 @@ import java.util.Map;
 public class LoginResponse {
     private boolean success;
     private String message;
+    private String sessionToken;
     private Map<String, String> userData;
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'utils/app_theme.dart';
 import 'services/auth_service.dart';
+import 'services/api_service.dart';
 import 'services/connectivity_service.dart';
 import 'screens/login/login_screen.dart';
 import 'screens/dashboard/dashboard_screen.dart';
@@ -8,7 +9,11 @@ import 'screens/dashboard/dashboard_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Initialize connectivity service
+  // Cargar URL guardada
+  final apiService = ApiService();
+  await apiService.loadBaseUrl();
+  
+  // Inicializar servicio de conectividad
   final connectivityService = ConnectivityService();
   connectivityService.initialize();
   

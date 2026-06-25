@@ -15,6 +15,9 @@ class ConnectivityService {
   StreamSubscription<List<ConnectivityResult>>? _subscription;
   bool _isProcessing = false;
 
+  // Callback para notificar acciones fallidas
+  Function(String actionType, String taskId, String error)? onActionFailed;
+
   void initialize() {
     _subscription = _connectivity.onConnectivityChanged.listen((results) {
       if (results.isNotEmpty && results.first != ConnectivityResult.none) {
@@ -43,7 +46,7 @@ class ConnectivityService {
       reason: reason,
     );
 
-    // Try to process immediately if connected
+    // Intentar procesar inmediatamente si hay conexión
     if (await isConnected()) {
       _processQueue();
     }
@@ -66,37 +69,51 @@ class ConnectivityService {
         final reason = item['reason'] as String?;
         final retryCount = item['retryCount'] as int;
 
-        // Skip if too many retries
+        // Si ya falló 3 veces, notificar y no reintentar más
         if (retryCount >= 3) {
-          await _dbService.removeQueueItem(id);
+          final error = item['lastError'] as String? ?? 'Número máximo de reintentos alcanzado';
+          onActionFailed?.call(actionType, taskId, error);
+          // NO eliminar - mantener para que el usuario pueda ver
           continue;
         }
 
         bool success = false;
+        String? errorMessage;
 
-        if (actionType == 'comment') {
-          final result = await _authService.addComment(
-            taskId,
-            comment ?? '',
-            imageBase64: imageBase64,
-            imageName: imageName,
-          );
-          success = result['success'] == true;
-        } else if (actionType == 'complete') {
-          final result = await _authService.completeTask(taskId);
-          success = result['success'] == true;
-        } else if (actionType == 'reject') {
-          final result = await _authService.rejectTask(taskId, reason ?? '');
-          success = result['success'] == true;
-        } else if (actionType == 'accept') {
-          final result = await _authService.acceptTask(taskId);
-          success = result['success'] == true;
+        try {
+          if (actionType == 'comment') {
+            final result = await _authService.addComment(
+              taskId,
+              comment ?? '',
+              imageBase64: imageBase64,
+              imageName: imageName,
+            );
+            success = result['success'] == true;
+            errorMessage = result['message'];
+          } else if (actionType == 'complete') {
+            final result = await _authService.completeTask(taskId);
+            success = result['success'] == true;
+            errorMessage = result['message'];
+          } else if (actionType == 'reject') {
+            final result = await _authService.rejectTask(taskId, reason ?? '');
+            success = result['success'] == true;
+            errorMessage = result['message'];
+          } else if (actionType == 'accept') {
+            final result = await _authService.acceptTask(taskId);
+            success = result['success'] == true;
+            errorMessage = result['message'];
+          }
+        } catch (e) {
+          errorMessage = e.toString();
         }
 
         if (success) {
           await _dbService.removeQueueItem(id);
         } else {
           await _dbService.incrementRetryCount(id);
+          if (errorMessage != null) {
+            await _dbService.updateQueueItemError(id, errorMessage);
+          }
         }
       }
     } catch (e) {
@@ -109,5 +126,18 @@ class ConnectivityService {
   Future<int> getQueueCount() async {
     final items = await _dbService.getQueueItems();
     return items.length;
+  }
+
+  Future<int> getFailedQueueCount() async {
+    final items = await _dbService.getFailedQueueItems();
+    return items.length;
+  }
+
+  Future<List<Map<String, dynamic>>> getFailedQueueItems() async {
+    return await _dbService.getFailedQueueItems();
+  }
+
+  Future<void> clearFailedQueueItems() async {
+    await _dbService.clearFailedQueueItems();
   }
 }

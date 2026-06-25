@@ -5,6 +5,7 @@ import '../../services/connectivity_service.dart';
 import '../../models/work_order.dart';
 import '../login/login_screen.dart';
 import '../work_order/work_order_list_screen.dart';
+import '../settings/settings_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -23,11 +24,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _isLoading = true;
   bool _isRefreshing = false;
   int _pendingQueueCount = 0;
+  int _failedQueueCount = 0;
 
   @override
   void initState() {
     super.initState();
     _loadData();
+    
+    // Configurar callback para acciones fallidas
+    _connectivityService.onActionFailed = (actionType, taskId, error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Acción fallida: $actionType para tarea $taskId'),
+            backgroundColor: AppTheme.darkRed,
+            duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: 'Ver',
+              textColor: AppTheme.white,
+              onPressed: () => _showFailedActions(),
+            ),
+          ),
+        );
+      }
+    };
   }
 
   Future<void> _loadData() async {
@@ -40,12 +60,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final teamOrders = await _authService.getTeamWorkOrders();
       final personalOrders = await _authService.getPersonalWorkOrders();
       final queueCount = await _connectivityService.getQueueCount();
+      final failedCount = await _connectivityService.getFailedQueueCount();
 
       setState(() {
         _newOrders = newOrders;
         _teamOrders = teamOrders;
         _personalOrders = personalOrders;
         _pendingQueueCount = queueCount;
+        _failedQueueCount = failedCount;
         _isLoading = false;
       });
     } catch (e) {
@@ -112,12 +134,111 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  void _showFailedActions() async {
+    final failedItems = await _connectivityService.getFailedQueueItems();
+    
+    if (!mounted) return;
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.darkGrey,
+        title: const Row(
+          children: [
+            Icon(Icons.error_outline, color: AppTheme.lightRed),
+            SizedBox(width: 8),
+            Text('Acciones Fallidas', style: TextStyle(color: AppTheme.white)),
+          ],
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: failedItems.isEmpty
+              ? const Text(
+                  'No hay acciones fallidas',
+                  style: TextStyle(color: AppTheme.lightGrey),
+                )
+              : ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: failedItems.length,
+                  itemBuilder: (context, index) {
+                    final item = failedItems[index];
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _getActionTypeName(item['actionType']),
+                              style: const TextStyle(
+                                color: AppTheme.white,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Tarea: ${item['taskId']}',
+                              style: const TextStyle(color: AppTheme.lightGrey),
+                            ),
+                            if (item['lastError'] != null) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                'Error: ${item['lastError']}',
+                                style: const TextStyle(color: AppTheme.lightRed, fontSize: 12),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              _connectivityService.clearFailedQueueItems();
+              Navigator.pop(context);
+              _loadData();
+            },
+            child: const Text('Limpiar todo', style: TextStyle(color: AppTheme.lightRed)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _getActionTypeName(String? actionType) {
+    switch (actionType) {
+      case 'comment': return 'Agregar comentario';
+      case 'complete': return 'Marcar como completada';
+      case 'reject': return 'Rechazar tarea';
+      case 'accept': return 'Aceptar tarea';
+      default: return 'Acción desconocida';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('ILAC Interflon'),
         actions: [
+          if (_failedQueueCount > 0)
+            IconButton(
+              icon: Badge(
+                label: Text('$_failedQueueCount'),
+                backgroundColor: AppTheme.darkRed,
+                child: const Icon(Icons.error_outline),
+              ),
+              onPressed: _showFailedActions,
+              tooltip: 'Acciones fallidas',
+            ),
           if (_pendingQueueCount > 0)
             IconButton(
               icon: Badge(
@@ -131,10 +252,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                 );
               },
+              tooltip: 'Acciones pendientes',
             ),
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: () async {
+              final result = await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const SettingsScreen()),
+              );
+              if (result == true) {
+                _loadData();
+              }
+            },
+            tooltip: 'Configuración',
+          ),
           IconButton(
             icon: const Icon(Icons.logout),
             onPressed: _logout,
+            tooltip: 'Cerrar sesión',
           ),
         ],
       ),

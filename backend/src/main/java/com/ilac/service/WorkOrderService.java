@@ -36,7 +36,7 @@ public class WorkOrderService {
      * Get authenticated page for a specific user
      */
     private Document getPage(String url, String identity) throws IOException {
-        Map<String, String> cookies = sessionService.getCookies(identity);
+        Map<String, String> cookies = sessionService.getCookiesByIdentity(identity);
         if (cookies == null) {
             logger.error("No hay sesión activa para usuario: {}", identity);
             throw new RuntimeException("Not logged in. Please login first.");
@@ -621,7 +621,7 @@ public class WorkOrderService {
      */
     public boolean addComment(String taskId, String commentText, byte[] imageData, String imageName, String identity) {
         try {
-            Map<String, String> cookies = sessionService.getCookies(identity);
+            Map<String, String> cookies = sessionService.getCookiesByIdentity(identity);
             if (cookies == null) {
                 throw new RuntimeException("Not logged in");
             }
@@ -702,7 +702,7 @@ public class WorkOrderService {
         try {
             logger.info("Marcando tarea como completada: {} - Usuario: {}", taskId, identity);
             
-            Map<String, String> cookies = sessionService.getCookies(identity);
+            Map<String, String> cookies = sessionService.getCookiesByIdentity(identity);
             if (cookies == null) {
                 logger.error("No hay sesión activa para usuario: {}", identity);
                 throw new RuntimeException("Not logged in");
@@ -782,7 +782,7 @@ public class WorkOrderService {
         try {
             logger.info("Rechazando tarea: {} - Usuario: {} - Razón: {}", taskId, identity, reason);
             
-            Map<String, String> cookies = sessionService.getCookies(identity);
+            Map<String, String> cookies = sessionService.getCookiesByIdentity(identity);
             if (cookies == null) {
                 logger.error("No hay sesión activa para usuario: {}", identity);
                 throw new RuntimeException("Not logged in");
@@ -866,7 +866,7 @@ public class WorkOrderService {
         try {
             logger.info("Aceptando tarea: {} - Usuario: {}", taskId, identity);
             
-            Map<String, String> cookies = sessionService.getCookies(identity);
+            Map<String, String> cookies = sessionService.getCookiesByIdentity(identity);
             if (cookies == null) {
                 logger.error("No hay sesión activa para usuario: {}", identity);
                 throw new RuntimeException("Not logged in");
@@ -1110,7 +1110,7 @@ public class WorkOrderService {
             logger.info("Agregando comentario - ServiceId: {} - Usuario: {} - Tiene imagen: {}", 
                     serviceId, identity, imageData != null);
             
-            Map<String, String> cookies = sessionService.getCookies(identity);
+            Map<String, String> cookies = sessionService.getCookiesByIdentity(identity);
             if (cookies == null) {
                 logger.error("No hay sesión activa para usuario: {}", identity);
                 throw new RuntimeException("Not logged in");
@@ -1235,7 +1235,7 @@ public class WorkOrderService {
         try {
             logger.info("Editando comentario: {} - Usuario: {}", commentId, identity);
             
-            Map<String, String> cookies = sessionService.getCookies(identity);
+            Map<String, String> cookies = sessionService.getCookiesByIdentity(identity);
             if (cookies == null) {
                 logger.error("No hay sesión activa para usuario: {}", identity);
                 throw new RuntimeException("Not logged in");

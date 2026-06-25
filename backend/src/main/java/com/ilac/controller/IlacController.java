@@ -27,110 +27,10 @@ public class IlacController {
     private WorkOrderService workOrderService;
 
     /**
-     * Debug: Get raw HTML of comment form
-     * POST /api/debug/comment-form
-     */
-    @PostMapping("/debug/comment-form")
-    public ResponseEntity<Map<String, Object>> debugCommentForm(@RequestBody TaskActionRequest request) {
-        logger.info("DEBUG /api/debug/comment-form - Tarea: {}", request.getTaskId());
-        
-        LoginRequest loginRequest = new LoginRequest(request.getIdentity(), request.getCredential());
-        LoginResponse loginResult = sessionService.login(loginRequest);
-
-        if (!loginResult.isSuccess()) {
-            return ResponseEntity.status(401).body(Map.of("success", false, "message", "Login fallido"));
-        }
-
-        try {
-            // Get service ID
-            String serviceId = workOrderService.getServiceId(request.getTaskId(), request.getIdentity());
-            if (serviceId == null) {
-                return ResponseEntity.ok(Map.of("success", false, "message", "No se encontró serviceId"));
-            }
-
-            // Get the raw HTML of the form page
-            String formUrl = "https://ilac.interflon.net/service-remark-create-" + serviceId;
-            String html = workOrderService.getRawHtml(formUrl, request.getIdentity());
-            
-            return ResponseEntity.ok(Map.of(
-                "success", true,
-                "serviceId", serviceId,
-                "formUrl", formUrl,
-                "html", html
-            ));
-        } catch (Exception e) {
-            return ResponseEntity.ok(Map.of("success", false, "message", e.getMessage()));
-        }
-    }
-
-    /**
-     * Debug: Get raw HTML of task detail page
-     * POST /api/debug/task-html
-     */
-    @PostMapping("/debug/task-html")
-    public ResponseEntity<Map<String, Object>> debugTaskHtml(@RequestBody TaskActionRequest request) {
-        logger.info("DEBUG /api/debug/task-html - Tarea: {}", request.getTaskId());
-        
-        LoginRequest loginRequest = new LoginRequest(request.getIdentity(), request.getCredential());
-        LoginResponse loginResult = sessionService.login(loginRequest);
-
-        if (!loginResult.isSuccess()) {
-            return ResponseEntity.status(401).body(Map.of("success", false, "message", "Login fallido"));
-        }
-
-        try {
-            String taskUrl = "https://ilac.interflon.net/engineer-task-detail-" + request.getTaskId();
-            String html = workOrderService.getRawHtml(taskUrl, request.getIdentity());
-            
-            return ResponseEntity.ok(Map.of(
-                "success", true,
-                "html", html
-            ));
-        } catch (Exception e) {
-            return ResponseEntity.ok(Map.of("success", false, "message", e.getMessage()));
-        }
-    }
-
-    /**
-     * Get comments for a task
-     * POST /api/task-comments
-     */
-    @PostMapping("/task-comments")
-    public ResponseEntity<Map<String, Object>> getTaskComments(@RequestBody TaskActionRequest request) {
-        logger.info("POST /api/task-comments - Usuario: {} - Tarea: {}", request.getIdentity(), request.getTaskId());
-        
-        LoginRequest loginRequest = new LoginRequest(request.getIdentity(), request.getCredential());
-        LoginResponse loginResult = sessionService.login(loginRequest);
-
-        if (!loginResult.isSuccess()) {
-            logger.warn("Login fallido en /api/task-comments - Usuario: {}", request.getIdentity());
-            return ResponseEntity.status(401).body(Map.of(
-                    "success", false,
-                    "message", "Falló inicio de sesión: " + loginResult.getMessage()
-            ));
-        }
-
-        try {
-            var comments = workOrderService.getTaskComments(request.getTaskId(), request.getIdentity());
-            logger.info("Comentarios obtenidos para tarea: {} - Cantidad: {}", request.getTaskId(), comments.size());
-            return ResponseEntity.ok(Map.of(
-                    "success", true,
-                    "comments", comments
-            ));
-        } catch (Exception e) {
-            logger.error("Error al obtener comentarios para tarea: {} - Error: {}", 
-                    request.getTaskId(), e.getMessage(), e);
-            return ResponseEntity.badRequest().body(Map.of(
-                    "success", false,
-                    "message", "Error al obtener comentarios: " + e.getMessage()
-            ));
-        }
-    }
-
-    /**
-     * Login and get all work orders with task details in one call
+     * Iniciar sesión y obtener todas las órdenes de trabajo
      * POST /api/dashboard
-     * Returns: newWorkOrders, teamWorkOrders, myWorkOrders
+     * Body: { "identity": "user@email.com", "credential": "password" }
+     * Retorna: token de sesión + datos de órdenes
      */
     @PostMapping("/dashboard")
     public ResponseEntity<FullDashboardResponse> getFullDashboard(@RequestBody LoginRequest request) {
@@ -162,6 +62,7 @@ public class IlacController {
             return ResponseEntity.ok(FullDashboardResponse.builder()
                     .success(true)
                     .message("Inicio de sesión exitoso")
+                    .sessionToken(loginResult.getSessionToken())
                     .userName(loginResult.getUserData() != null ? 
                             loginResult.getUserData().getOrDefault("userInfo", request.getIdentity()) : 
                             request.getIdentity())
@@ -173,6 +74,7 @@ public class IlacController {
             return ResponseEntity.ok(FullDashboardResponse.builder()
                     .success(true)
                     .message("Inicio de sesión exitoso, pero error al obtener órdenes: " + e.getMessage())
+                    .sessionToken(loginResult.getSessionToken())
                     .userName(request.getIdentity())
                     .workOrders(Map.of(
                         "newWorkOrders", List.of(),
@@ -184,49 +86,87 @@ public class IlacController {
     }
 
     /**
-     * Add a comment to a task
-     * POST /api/comment
+     * Obtener comentarios de una tarea
+     * POST /api/task-comments
+     * Body: { "token": "session-token", "taskId": "123456" }
      */
-    @PostMapping("/comment")
-    public ResponseEntity<Map<String, Object>> addComment(@RequestBody CommentRequest request) {
-        logger.info("POST /api/comment - Usuario: {} - Tarea: {}", request.getIdentity(), request.getTaskId());
+    @PostMapping("/task-comments")
+    public ResponseEntity<Map<String, Object>> getTaskComments(@RequestBody TokenRequest request) {
+        logger.info("POST /api/task-comments - Token: {}... - Tarea: {}", 
+                request.getToken().substring(0, Math.min(8, request.getToken().length())), 
+                request.getTaskId());
         
-        LoginRequest loginRequest = new LoginRequest(request.getIdentity(), request.getCredential());
-        LoginResponse loginResult = sessionService.login(loginRequest);
-
-        if (!loginResult.isSuccess()) {
-            logger.warn("Login fallido en /api/comment - Usuario: {} - Razón: {}", 
-                    request.getIdentity(), loginResult.getMessage());
+        SessionService.UserSession session = sessionService.getSessionByToken(request.getToken());
+        if (session == null) {
+            logger.warn("Token inválido o expirado");
             return ResponseEntity.status(401).body(Map.of(
                     "success", false,
-                    "message", "Falló inicio de sesión: " + loginResult.getMessage()
+                    "message", "Sesión inválida o expirada"
             ));
         }
 
-        // Get service ID for the task
-        String serviceId = workOrderService.getServiceId(request.getTaskId(), request.getIdentity());
+        try {
+            var comments = workOrderService.getTaskComments(request.getTaskId(), session.getIdentity());
+            logger.info("Comentarios obtenidos para tarea: {} - Cantidad: {}", request.getTaskId(), comments.size());
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "comments", comments
+            ));
+        } catch (Exception e) {
+            logger.error("Error al obtener comentarios para tarea: {} - Error: {}", 
+                    request.getTaskId(), e.getMessage(), e);
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "message", "Error al obtener comentarios: " + e.getMessage()
+            ));
+        }
+    }
+
+    /**
+     * Agregar comentario a una tarea
+     * POST /api/comment
+     * Body: { "token": "session-token", "taskId": "123456", "comment": "texto", "imageBase64": "opcional", "imageName": "opcional" }
+     */
+    @PostMapping("/comment")
+    public ResponseEntity<Map<String, Object>> addComment(@RequestBody Map<String, String> request) {
+        String token = request.get("token");
+        String taskId = request.get("taskId");
+        String commentText = request.get("comment");
+        String imageBase64 = request.get("imageBase64");
+        String imageName = request.get("imageName");
+        
+        logger.info("POST /api/comment - Token: {}... - Tarea: {}", 
+                token.substring(0, Math.min(8, token.length())), taskId);
+        
+        SessionService.UserSession session = sessionService.getSessionByToken(token);
+        if (session == null) {
+            logger.warn("Token inválido o expirado");
+            return ResponseEntity.status(401).body(Map.of(
+                    "success", false,
+                    "message", "Sesión inválida o expirada"
+            ));
+        }
+
+        // Obtener service ID para la tarea
+        String serviceId = workOrderService.getServiceId(taskId, session.getIdentity());
         if (serviceId == null) {
-            logger.error("No se encontró serviceId para tarea: {} - Usuario: {}", 
-                    request.getTaskId(), request.getIdentity());
+            logger.error("No se encontró serviceId para tarea: {} - Usuario: {}", taskId, session.getIdentity());
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
                     "message", "No se pudo encontrar el ID de servicio para la tarea"
             ));
         }
 
-        logger.debug("ServiceId encontrado: {} para tarea: {}", serviceId, request.getTaskId());
+        logger.debug("ServiceId encontrado: {} para tarea: {}", serviceId, taskId);
 
-        // Decode image if provided
+        // Decodificar imagen si se proporciona
         byte[] imageData = null;
-        String imageName = null;
-        if (request.getImageBase64() != null && !request.getImageBase64().isEmpty()) {
+        if (imageBase64 != null && !imageBase64.isEmpty()) {
             try {
-                imageData = Base64.getDecoder().decode(request.getImageBase64());
-                imageName = request.getImageName() != null ? request.getImageName() : "imagen.jpg";
+                imageData = Base64.getDecoder().decode(imageBase64);
                 logger.debug("Imagen decodificada: {} ({} bytes)", imageName, imageData.length);
             } catch (Exception e) {
-                logger.error("Error decodificando imagen base64 - Usuario: {} - Error: {}", 
-                        request.getIdentity(), e.getMessage());
+                logger.error("Error decodificando imagen base64 - Error: {}", e.getMessage());
                 return ResponseEntity.badRequest().body(Map.of(
                         "success", false,
                         "message", "Datos de imagen base64 inválidos"
@@ -236,22 +176,22 @@ public class IlacController {
 
         boolean result = workOrderService.addCommentWithServiceId(
                 serviceId,
-                request.getComment(),
+                commentText,
                 imageData,
                 imageName,
-                request.getIdentity()
+                session.getIdentity()
         );
 
         if (result) {
-            logger.info("Comentario agregado exitosamente - Usuario: {} - Tarea: {}", 
-                    request.getIdentity(), request.getTaskId());
+            logger.info("Comentario agregado exitosamente - Token: {}... - Tarea: {}", 
+                    token.substring(0, Math.min(8, token.length())), taskId);
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "message", "Comentario agregado exitosamente"
             ));
         } else {
-            logger.error("Error al agregar comentario - Usuario: {} - Tarea: {} - ServiceId: {}", 
-                    request.getIdentity(), request.getTaskId(), serviceId);
+            logger.error("Error al agregar comentario - Token: {}... - Tarea: {} - ServiceId: {}", 
+                    token.substring(0, Math.min(8, token.length())), taskId, serviceId);
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
                     "message", "Error al agregar comentario"
@@ -260,40 +200,39 @@ public class IlacController {
     }
 
     /**
-     * Edit a comment
+     * Editar un comentario
      * POST /api/edit-comment
-     * Body: { "identity", "credential", "commentId", "comment" }
+     * Body: { "token": "session-token", "commentId": "123456", "comment": "nuevo texto" }
      */
     @PostMapping("/edit-comment")
-    public ResponseEntity<Map<String, Object>> editComment(@RequestBody Map<String, String> request) {
-        String identity = request.get("identity");
-        String credential = request.get("credential");
-        String commentId = request.get("commentId");
-        String commentText = request.get("comment");
+    public ResponseEntity<Map<String, Object>> editComment(@RequestBody TokenRequest request) {
+        logger.info("POST /api/edit-comment - Token: {}... - Comentario: {}", 
+                request.getToken().substring(0, Math.min(8, request.getToken().length())), 
+                request.getCommentId());
         
-        logger.info("POST /api/edit-comment - Usuario: {} - Comentario: {}", identity, commentId);
-        
-        LoginRequest loginRequest = new LoginRequest(identity, credential);
-        LoginResponse loginResult = sessionService.login(loginRequest);
-
-        if (!loginResult.isSuccess()) {
-            logger.warn("Login fallido en /api/edit-comment - Usuario: {}", identity);
+        SessionService.UserSession session = sessionService.getSessionByToken(request.getToken());
+        if (session == null) {
+            logger.warn("Token inválido o expirado");
             return ResponseEntity.status(401).body(Map.of(
                     "success", false,
-                    "message", "Falló inicio de sesión: " + loginResult.getMessage()
+                    "message", "Sesión inválida o expirada"
             ));
         }
 
-        boolean result = workOrderService.editComment(commentId, commentText, identity);
+        boolean result = workOrderService.editComment(request.getCommentId(), request.getComment(), session.getIdentity());
 
         if (result) {
-            logger.info("Comentario editado exitosamente - Usuario: {} - Comentario: {}", identity, commentId);
+            logger.info("Comentario editado exitosamente - Token: {}... - Comentario: {}", 
+                    request.getToken().substring(0, Math.min(8, request.getToken().length())), 
+                    request.getCommentId());
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "message", "Comentario editado exitosamente"
             ));
         } else {
-            logger.error("Error al editar comentario - Usuario: {} - Comentario: {}", identity, commentId);
+            logger.error("Error al editar comentario - Token: {}... - Comentario: {}", 
+                    request.getToken().substring(0, Math.min(8, request.getToken().length())), 
+                    request.getCommentId());
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
                     "message", "Error al editar comentario"
@@ -302,36 +241,39 @@ public class IlacController {
     }
 
     /**
-     * Mark a task as completed
+     * Marcar tarea como completada
      * POST /api/complete-task
+     * Body: { "token": "session-token", "taskId": "123456" }
      */
     @PostMapping("/complete-task")
-    public ResponseEntity<Map<String, Object>> completeTask(@RequestBody TaskActionRequest request) {
-        logger.info("POST /api/complete-task - Usuario: {} - Tarea: {}", request.getIdentity(), request.getTaskId());
+    public ResponseEntity<Map<String, Object>> completeTask(@RequestBody TokenRequest request) {
+        logger.info("POST /api/complete-task - Token: {}... - Tarea: {}", 
+                request.getToken().substring(0, Math.min(8, request.getToken().length())), 
+                request.getTaskId());
         
-        LoginRequest loginRequest = new LoginRequest(request.getIdentity(), request.getCredential());
-        LoginResponse loginResult = sessionService.login(loginRequest);
-
-        if (!loginResult.isSuccess()) {
-            logger.warn("Login fallido en /api/complete-task - Usuario: {}", request.getIdentity());
+        SessionService.UserSession session = sessionService.getSessionByToken(request.getToken());
+        if (session == null) {
+            logger.warn("Token inválido o expirado");
             return ResponseEntity.status(401).body(Map.of(
                     "success", false,
-                    "message", "Falló inicio de sesión: " + loginResult.getMessage()
+                    "message", "Sesión inválida o expirada"
             ));
         }
 
-        boolean result = workOrderService.markTaskAsCompleted(request.getTaskId(), request.getIdentity());
+        boolean result = workOrderService.markTaskAsCompleted(request.getTaskId(), session.getIdentity());
 
         if (result) {
-            logger.info("Tarea marcada como completada - Usuario: {} - Tarea: {}", 
-                    request.getIdentity(), request.getTaskId());
+            logger.info("Tarea marcada como completada - Token: {}... - Tarea: {}", 
+                    request.getToken().substring(0, Math.min(8, request.getToken().length())), 
+                    request.getTaskId());
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "message", "Tarea marcada como completada"
             ));
         } else {
-            logger.error("Error al marcar tarea como completada - Usuario: {} - Tarea: {}", 
-                    request.getIdentity(), request.getTaskId());
+            logger.error("Error al marcar tarea como completada - Token: {}... - Tarea: {}", 
+                    request.getToken().substring(0, Math.min(8, request.getToken().length())), 
+                    request.getTaskId());
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
                     "message", "Error al marcar tarea como completada"
@@ -340,42 +282,43 @@ public class IlacController {
     }
 
     /**
-     * Reject a task with a reason
+     * Rechazar tarea con razón
      * POST /api/reject-task
-     * Body: { "identity", "credential", "taskId", "reason" }
+     * Body: { "token": "session-token", "taskId": "123456", "reason": "motivo" }
      */
     @PostMapping("/reject-task")
-    public ResponseEntity<Map<String, Object>> rejectTask(@RequestBody RejectTaskRequest request) {
-        logger.info("POST /api/reject-task - Usuario: {} - Tarea: {} - Razón: {}", 
-                request.getIdentity(), request.getTaskId(), request.getReason());
+    public ResponseEntity<Map<String, Object>> rejectTask(@RequestBody TokenRequest request) {
+        logger.info("POST /api/reject-task - Token: {}... - Tarea: {} - Razón: {}", 
+                request.getToken().substring(0, Math.min(8, request.getToken().length())), 
+                request.getTaskId(), request.getReason());
         
-        LoginRequest loginRequest = new LoginRequest(request.getIdentity(), request.getCredential());
-        LoginResponse loginResult = sessionService.login(loginRequest);
-
-        if (!loginResult.isSuccess()) {
-            logger.warn("Login fallido en /api/reject-task - Usuario: {}", request.getIdentity());
+        SessionService.UserSession session = sessionService.getSessionByToken(request.getToken());
+        if (session == null) {
+            logger.warn("Token inválido o expirado");
             return ResponseEntity.status(401).body(Map.of(
                     "success", false,
-                    "message", "Falló inicio de sesión: " + loginResult.getMessage()
+                    "message", "Sesión inválida o expirada"
             ));
         }
 
         boolean result = workOrderService.rejectTask(
                 request.getTaskId(),
                 request.getReason(),
-                request.getIdentity()
+                session.getIdentity()
         );
 
         if (result) {
-            logger.info("Tarea rechazada exitosamente - Usuario: {} - Tarea: {}", 
-                    request.getIdentity(), request.getTaskId());
+            logger.info("Tarea rechazada exitosamente - Token: {}... - Tarea: {}", 
+                    request.getToken().substring(0, Math.min(8, request.getToken().length())), 
+                    request.getTaskId());
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "message", "Tarea rechazada exitosamente"
             ));
         } else {
-            logger.error("Error al rechazar tarea - Usuario: {} - Tarea: {}", 
-                    request.getIdentity(), request.getTaskId());
+            logger.error("Error al rechazar tarea - Token: {}... - Tarea: {}", 
+                    request.getToken().substring(0, Math.min(8, request.getToken().length())), 
+                    request.getTaskId());
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
                     "message", "Error al rechazar tarea"
@@ -384,37 +327,39 @@ public class IlacController {
     }
 
     /**
-     * Accept a task
+     * Aceptar tarea
      * POST /api/accept-task
-     * Body: { "identity", "credential", "taskId" }
+     * Body: { "token": "session-token", "taskId": "123456" }
      */
     @PostMapping("/accept-task")
-    public ResponseEntity<Map<String, Object>> acceptTask(@RequestBody TaskActionRequest request) {
-        logger.info("POST /api/accept-task - Usuario: {} - Tarea: {}", request.getIdentity(), request.getTaskId());
+    public ResponseEntity<Map<String, Object>> acceptTask(@RequestBody TokenRequest request) {
+        logger.info("POST /api/accept-task - Token: {}... - Tarea: {}", 
+                request.getToken().substring(0, Math.min(8, request.getToken().length())), 
+                request.getTaskId());
         
-        LoginRequest loginRequest = new LoginRequest(request.getIdentity(), request.getCredential());
-        LoginResponse loginResult = sessionService.login(loginRequest);
-
-        if (!loginResult.isSuccess()) {
-            logger.warn("Login fallido en /api/accept-task - Usuario: {}", request.getIdentity());
+        SessionService.UserSession session = sessionService.getSessionByToken(request.getToken());
+        if (session == null) {
+            logger.warn("Token inválido o expirado");
             return ResponseEntity.status(401).body(Map.of(
                     "success", false,
-                    "message", "Falló inicio de sesión: " + loginResult.getMessage()
+                    "message", "Sesión inválida o expirada"
             ));
         }
 
-        boolean result = workOrderService.acceptTask(request.getTaskId(), request.getIdentity());
+        boolean result = workOrderService.acceptTask(request.getTaskId(), session.getIdentity());
 
         if (result) {
-            logger.info("Tarea aceptada exitosamente - Usuario: {} - Tarea: {}", 
-                    request.getIdentity(), request.getTaskId());
+            logger.info("Tarea aceptada exitosamente - Token: {}... - Tarea: {}", 
+                    request.getToken().substring(0, Math.min(8, request.getToken().length())), 
+                    request.getTaskId());
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "message", "Tarea aceptada exitosamente"
             ));
         } else {
-            logger.error("Error al aceptar tarea - Usuario: {} - Tarea: {}", 
-                    request.getIdentity(), request.getTaskId());
+            logger.error("Error al aceptar tarea - Token: {}... - Tarea: {}", 
+                    request.getToken().substring(0, Math.min(8, request.getToken().length())), 
+                    request.getTaskId());
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
                     "message", "Error al aceptar tarea"
