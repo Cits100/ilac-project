@@ -144,7 +144,12 @@ public class WorkOrderService {
 
     /**
      * Obtener estado actual de una tarea
-     * Retorna: status (completed/pending), statusText
+     * Retorna: status (completed/pending), statusText, canComplete
+     * 
+     * Estructura HTML esperada:
+     * <span class="task-order-number">Completado</span>  (si está completada)
+     * <span class="task-order-number">1</span>           (si está pendiente)
+     * <a class="job-set-status" data-values="taskId">Marcar como realizada</a>  (si se puede completar)
      */
     public Map<String, String> getTaskStatus(String taskId, String identity) {
         try {
@@ -155,10 +160,22 @@ public class WorkOrderService {
 
             Map<String, String> status = new HashMap<>();
 
-            // Verificar si la tarea tiene el badge "Completado"
+            // Log para debuggear
+            logger.debug("Buscando estado de tarea: {} - Selectores probados", taskId);
+
+            // Buscar el badge de estado con múltiples selectores
             Element statusBadge = doc.selectFirst(".task-order-number");
+            if (statusBadge == null) {
+                statusBadge = doc.selectFirst("span.task-order-number");
+            }
+            if (statusBadge == null) {
+                statusBadge = doc.selectFirst("[class*=task-order-number]");
+            }
+
             if (statusBadge != null) {
                 String statusText = statusBadge.text().trim();
+                logger.debug("Badge encontrado: '{}' para tarea: {}", statusText, taskId);
+                
                 if ("Completado".equals(statusText)) {
                     status.put("status", "completed");
                     status.put("statusText", "Completado");
@@ -167,15 +184,17 @@ public class WorkOrderService {
                     status.put("statusText", statusText);
                 }
             } else {
-                status.put("status", "unknown");
-                status.put("statusText", "Desconocido");
+                logger.warn("No se encontró badge de estado para tarea: {}", taskId);
+                status.put("status", "pending");
+                status.put("statusText", "Pendiente");
             }
 
             // Verificar si existe el enlace "Marcar como realizada"
             Element markDoneLink = findMarkDoneLink(doc, taskId);
             status.put("canComplete", markDoneLink != null ? "true" : "false");
 
-            logger.info("Estado de tarea: {} - Status: {}", taskId, status.get("status"));
+            logger.info("Estado de tarea: {} - Status: {} - canComplete: {}", 
+                    taskId, status.get("status"), status.get("canComplete"));
             return status;
         } catch (Exception e) {
             logger.error("Error al obtener estado de tarea: {} - Error: {}", taskId, e.getMessage(), e);
@@ -207,6 +226,9 @@ public class WorkOrderService {
 
     /**
      * Agregar comentario a una tarea
+     * 
+     * El formulario de ILAC retorna JSON con HTML escapado.
+     * El CSRF token está en el HTML dentro del JSON.
      */
     public boolean addCommentWithServiceId(String serviceId, String commentText,
                                             byte[] imageData, String imageName, String identity) {
@@ -220,12 +242,31 @@ public class WorkOrderService {
             // Obtener formulario para CSRF token
             Document doc = ilacClient.getPage(formUrl, cookies);
             String html = doc.html();
+            
+            // Log para debuggear
+            logger.debug("HTML del formulario (primeros 500 chars): {}", 
+                    html.substring(0, Math.min(500, html.length())));
+            
+            // Extraer CSRF token del JSON con HTML escapado
             String csrfToken = ilacClient.extractCsrfTokenFromJson(html);
 
             if (csrfToken == null || csrfToken.isEmpty()) {
-                logger.warn("No se encontró token CSRF para comentario - ServiceId: {}", serviceId);
-                csrfToken = "";
+                logger.warn("No se encontró token CSRF para comentario - ServiceId: {} - Intentando extraer directamente", serviceId);
+                
+                // Intentar extraer directamente del HTML
+                Element csrfElement = doc.selectFirst("input[name=csrf]");
+                if (csrfElement != null) {
+                    csrfToken = csrfElement.val();
+                    logger.debug("CSRF extraído directamente: {}...", csrfToken.substring(0, Math.min(20, csrfToken.length())));
+                }
             }
+
+            if (csrfToken == null || csrfToken.isEmpty()) {
+                logger.error("No se pudo obtener token CSRF para comentario - ServiceId: {}", serviceId);
+                return false;
+            }
+
+            logger.debug("CSRF Token para comentario: {}...", csrfToken.substring(0, Math.min(20, csrfToken.length())));
 
             // Preparar datos del formulario
             Map<String, String> formData = new HashMap<>();
@@ -237,17 +278,29 @@ public class WorkOrderService {
             // Enviar formulario
             Connection.Response response;
             if (imageData != null && imageName != null && !imageName.isEmpty()) {
+                logger.debug("Enviando comentario con imagen: {} ({} bytes)", imageName, imageData.length);
                 response = ilacClient.postFormWithFile(formUrl, cookies, formData,
                         "serviceRemark[file][fileInfo]", imageName, imageData);
             } else {
+                logger.debug("Enviando comentario sin imagen");
                 response = ilacClient.postForm(formUrl, cookies, formData);
             }
 
+            // Verificar respuesta
+            String responseBody = response.body();
             boolean success = response.statusCode() == 200 || response.statusCode() == 302;
+            
             if (success) {
+                // Verificar si la respuesta indica éxito real
+                if (responseBody.contains("error") || responseBody.contains("Error")) {
+                    logger.warn("Respuesta indica posible error - ServiceId: {} - Body: {}", 
+                            serviceId, responseBody.substring(0, Math.min(200, responseBody.length())));
+                }
                 logger.info("Comentario agregado - ServiceId: {} - Status: {}", serviceId, response.statusCode());
             } else {
-                logger.error("Error al agregar comentario - ServiceId: {} - Status: {}", serviceId, response.statusCode());
+                logger.error("Error al agregar comentario - ServiceId: {} - Status: {} - Body: {}", 
+                        serviceId, response.statusCode(), 
+                        responseBody.substring(0, Math.min(200, responseBody.length())));
             }
             return success;
         } catch (Exception e) {
