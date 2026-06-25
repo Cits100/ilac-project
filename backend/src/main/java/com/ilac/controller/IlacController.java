@@ -64,6 +64,70 @@ public class IlacController {
     }
 
     /**
+     * Debug: Get raw HTML of task detail page
+     * POST /api/debug/task-html
+     */
+    @PostMapping("/debug/task-html")
+    public ResponseEntity<Map<String, Object>> debugTaskHtml(@RequestBody TaskActionRequest request) {
+        logger.info("DEBUG /api/debug/task-html - Tarea: {}", request.getTaskId());
+        
+        LoginRequest loginRequest = new LoginRequest(request.getIdentity(), request.getCredential());
+        LoginResponse loginResult = sessionService.login(loginRequest);
+
+        if (!loginResult.isSuccess()) {
+            return ResponseEntity.status(401).body(Map.of("success", false, "message", "Login fallido"));
+        }
+
+        try {
+            String taskUrl = "https://ilac.interflon.net/engineer-task-detail-" + request.getTaskId();
+            String html = workOrderService.getRawHtml(taskUrl, request.getIdentity());
+            
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "html", html
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.ok(Map.of("success", false, "message", e.getMessage()));
+        }
+    }
+
+    /**
+     * Get comments for a task
+     * POST /api/task-comments
+     */
+    @PostMapping("/task-comments")
+    public ResponseEntity<Map<String, Object>> getTaskComments(@RequestBody TaskActionRequest request) {
+        logger.info("POST /api/task-comments - Usuario: {} - Tarea: {}", request.getIdentity(), request.getTaskId());
+        
+        LoginRequest loginRequest = new LoginRequest(request.getIdentity(), request.getCredential());
+        LoginResponse loginResult = sessionService.login(loginRequest);
+
+        if (!loginResult.isSuccess()) {
+            logger.warn("Login fallido en /api/task-comments - Usuario: {}", request.getIdentity());
+            return ResponseEntity.status(401).body(Map.of(
+                    "success", false,
+                    "message", "Falló inicio de sesión: " + loginResult.getMessage()
+            ));
+        }
+
+        try {
+            var comments = workOrderService.getTaskComments(request.getTaskId(), request.getIdentity());
+            logger.info("Comentarios obtenidos para tarea: {} - Cantidad: {}", request.getTaskId(), comments.size());
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "comments", comments
+            ));
+        } catch (Exception e) {
+            logger.error("Error al obtener comentarios para tarea: {} - Error: {}", 
+                    request.getTaskId(), e.getMessage(), e);
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "message", "Error al obtener comentarios: " + e.getMessage()
+            ));
+        }
+    }
+
+    /**
      * Login and get all work orders with task details in one call
      * POST /api/dashboard
      * Returns: newWorkOrders, teamWorkOrders, myWorkOrders

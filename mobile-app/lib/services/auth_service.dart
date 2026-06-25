@@ -206,4 +206,16 @@ class AuthService {
       taskId,
     );
   }
+
+  Future<Map<String, dynamic>> getTaskComments(String taskId) async {
+    if (_currentIdentity == null || _currentCredential == null) {
+      return {'success': false, 'message': 'No hay sesión activa'};
+    }
+
+    return await _apiService.getTaskComments(
+      _currentIdentity!,
+      _currentCredential!,
+      taskId,
+    );
+  }
 }

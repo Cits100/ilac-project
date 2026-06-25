@@ -230,4 +230,36 @@ class ApiService {
       };
     }
   }
+
+  Future<Map<String, dynamic>> getTaskComments(
+    String identity,
+    String credential,
+    String taskId,
+  ) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/task-comments'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'identity': identity,
+          'credential': credential,
+          'taskId': taskId,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        return {
+          'success': false,
+          'message': 'Error del servidor: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      return {
+        'success': false,
+        'message': 'Error de conexión: $e',
+      };
+    }
+  }
 }

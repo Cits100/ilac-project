@@ -3,6 +3,7 @@ package com.ilac.service;
 import com.ilac.model.TaskDetail;
 import com.ilac.model.WorkOrder;
 import com.ilac.model.Task;
+import com.ilac.model.TaskComment;
 import org.jsoup.Connection;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
@@ -918,6 +919,185 @@ public class WorkOrderService {
             return null;
         } catch (Exception e) {
             e.printStackTrace();
+            return null;
+        }
+    }
+
+    /**
+     * Get comments for a task from the task detail page
+     */
+    public List<TaskComment> getTaskComments(String taskId, String identity) {
+        try {
+            logger.info("Obteniendo comentarios para tarea: {} - Usuario: {}", taskId, identity);
+            
+            String taskUrl = baseUrl + "/engineer-task-detail-" + taskId;
+            Document doc = getPage(taskUrl, identity);
+            
+            List<TaskComment> comments = new ArrayList<>();
+            
+            // Find the comment list section
+            Element commentList = doc.selectFirst("#comment-list");
+            if (commentList == null) {
+                logger.debug("No se encontró lista de comentarios");
+                return comments;
+            }
+            
+            // Find all comment elements (well-sm divs)
+            Elements commentElements = commentList.select(".well.well-sm");
+            
+            for (Element commentEl : commentElements) {
+                TaskComment comment = parseCommentElement(commentEl);
+                if (comment != null) {
+                    comments.add(comment);
+                }
+            }
+            
+            logger.info("Comentarios encontrados para tarea: {} - Cantidad: {}", taskId, comments.size());
+            return comments;
+        } catch (Exception e) {
+            logger.error("Error al obtener comentarios para tarea: {} - Error: {}", taskId, e.getMessage(), e);
+            e.printStackTrace();
+            return new ArrayList<>();
+        }
+    }
+
+    /**
+     * Parse a comment element from the task detail page
+     * Structure:
+     * <div class="well well-sm">
+     *   <div class="row">
+     *     <div class="col-sm-11">
+     *       <p><span class="glyphicon glyphicon-calendar"></span> 24/06/2026 
+     *          <span class="glyphicon glyphicon-time"></span> 07:38 
+     *          <span class="glyphicon glyphicon-user"></span> Cristian Tapia 
+     *          <span class="glyphicon glyphicon-picture"></span> 
+     *          <a data-toggle="lightbox" data-type="image" href="/service-remark-display-image-701234"> Imagen </a>
+     *       </p>
+     *       <p><strong>Comentarios del parte de mantenimiento: </strong> texto del comentario</p>
+     *     </div>
+     *     <div class="col-sm-1 text-right">
+     *       <a data-ajax="" href="/service-remark-edit-132434" class="btn btn-sm">...</a>
+     *     </div>
+     *   </div>
+     * </div>
+     */
+    private TaskComment parseCommentElement(Element commentEl) {
+        try {
+            // Get the first paragraph with metadata
+            Element metaParagraph = commentEl.selectFirst("p");
+            if (metaParagraph == null) {
+                return null;
+            }
+            
+            String metaText = metaParagraph.text();
+            
+            // Extract date (format: DD/MM/YYYY)
+            String date = "";
+            java.util.regex.Pattern datePattern = java.util.regex.Pattern.compile("(\\d{2}/\\d{2}/\\d{4})");
+            java.util.regex.Matcher dateMatcher = datePattern.matcher(metaText);
+            if (dateMatcher.find()) {
+                date = dateMatcher.group(1);
+            }
+            
+            // Extract time (format: HH:MM)
+            String time = "";
+            java.util.regex.Pattern timePattern = java.util.regex.Pattern.compile("(\\d{2}:\\d{2})");
+            java.util.regex.Matcher timeMatcher = timePattern.matcher(metaText);
+            if (timeMatcher.find()) {
+                time = timeMatcher.group(1);
+            }
+            
+            // Combine date and time
+            String dateTime = date;
+            if (!time.isEmpty()) {
+                dateTime = date + " " + time;
+            }
+            
+            // Extract author (text after glyphicon-user)
+            String author = "";
+            Element userIcon = metaParagraph.selectFirst(".glyphicon-user");
+            if (userIcon != null) {
+                // Get the text content after user icon
+                String iconHtml = userIcon.outerHtml();
+                int iconIdx = metaParagraph.html().indexOf(iconHtml);
+                if (iconIdx >= 0) {
+                    String afterIcon = metaParagraph.html().substring(iconIdx + iconHtml.length());
+                    // Remove HTML tags
+                    afterIcon = afterIcon.replaceAll("<[^>]+>", " ").trim();
+                    // Remove image indicator if present
+                    int imageIdx = afterIcon.indexOf("Imagen");
+                    if (imageIdx > 0) {
+                        afterIcon = afterIcon.substring(0, imageIdx);
+                    }
+                    // Remove picture icon reference
+                    int pictureIdx = afterIcon.indexOf("glyphicon-picture");
+                    if (pictureIdx > 0) {
+                        afterIcon = afterIcon.substring(0, pictureIdx);
+                    }
+                    author = afterIcon.trim();
+                }
+            }
+            
+            // Extract text from second paragraph
+            String text = "";
+            Elements paragraphs = commentEl.select("p");
+            if (paragraphs.size() > 1) {
+                Element textParagraph = paragraphs.get(1);
+                // Remove the "Comentarios del parte de mantenimiento: " prefix
+                String fullText = textParagraph.text();
+                if (fullText.contains("Comentarios del parte de mantenimiento:")) {
+                    text = fullText.substring(fullText.indexOf("Comentarios del parte de mantenimiento:") + 
+                            "Comentarios del parte de mantenimiento:".length()).trim();
+                } else if (fullText.contains("Comentario rápido:")) {
+                    text = fullText.substring(fullText.indexOf("Comentario rápido:") + 
+                            "Comentario rápido:".length()).trim();
+                } else {
+                    text = fullText;
+                }
+            }
+            
+            // Extract image URL if present
+            String imageUrl = "";
+            Element imgLink = commentEl.selectFirst("a[data-toggle=lightbox]");
+            if (imgLink != null) {
+                String href = imgLink.attr("href");
+                if (!href.isEmpty()) {
+                    imageUrl = href.startsWith("http") ? href : baseUrl + href;
+                }
+            }
+            
+            // Extract edit link to get comment ID
+            String editLink = "";
+            Element editEl = commentEl.selectFirst("a[href*=service-remark-edit]");
+            if (editEl != null) {
+                editLink = editEl.attr("href");
+            }
+            
+            // Extract comment ID from edit link
+            String commentId = "";
+            if (!editLink.isEmpty()) {
+                java.util.regex.Pattern idPattern = java.util.regex.Pattern.compile("service-remark-edit-(\\d+)");
+                java.util.regex.Matcher idMatcher = idPattern.matcher(editLink);
+                if (idMatcher.find()) {
+                    commentId = idMatcher.group(1);
+                }
+            }
+            
+            // Only return if we have at least some content
+            if (!dateTime.isEmpty() || !author.isEmpty() || !text.isEmpty()) {
+                return TaskComment.builder()
+                        .id(commentId)
+                        .date(dateTime)
+                        .author(author)
+                        .text(text)
+                        .imageUrl(imageUrl)
+                        .fileName(imageUrl.isEmpty() ? "" : "Imagen")
+                        .build();
+            }
+            
+            return null;
+        } catch (Exception e) {
+            logger.error("Error al parsear comentario: {}", e.getMessage());
             return null;
         }
     }
