@@ -111,4 +111,20 @@ class ConnectivityService {
     final items = await _dbService.getQueueItems();
     return items.length;
   }
+
+  // Callback para notificar acciones fallidas
+  Function(String actionType, String taskId, String error)? onActionFailed;
+
+  Future<int> getFailedQueueCount() async {
+    final items = await _dbService.getFailedQueueItems();
+    return items.length;
+  }
+
+  Future<List<Map<String, dynamic>>> getFailedQueueItems() async {
+    return await _dbService.getFailedQueueItems();
+  }
+
+  Future<void> clearFailedQueueItems() async {
+    await _dbService.clearFailedQueueItems();
+  }
 }
