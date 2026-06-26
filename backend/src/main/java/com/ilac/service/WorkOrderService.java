@@ -260,6 +260,7 @@ public class WorkOrderService {
      * 
      * El formulario de ILAC retorna JSON con HTML escapado.
      * El CSRF token está en el HTML dentro del JSON.
+     * Formato: \u003Cinput type=\u0022hidden\u0022 name=\u0022csrf\u0022 value=\u0022TOKEN\u0022\u003E
      */
     public boolean addCommentWithServiceId(String serviceId, String commentText,
                                             byte[] imageData, String imageName, String identity) {
@@ -275,16 +276,45 @@ public class WorkOrderService {
             String html = doc.html();
             
             // Log para debuggear
-            logger.debug("HTML del formulario (primeros 500 chars): {}", 
-                    html.substring(0, Math.min(500, html.length())));
+            logger.debug("HTML del formulario (primeros 1000 chars): {}", 
+                    html.substring(0, Math.min(1000, html.length())));
             
             // Extraer CSRF token del JSON con HTML escapado
-            String csrfToken = ilacClient.extractCsrfTokenFromJson(html);
-
+            // El formato es: name=\u0022csrf\u0022 value=\u0022TOKEN\u0022
+            String csrfToken = null;
+            
+            // Buscar patrón Unicode: name=\u0022csrf\u0022 value=\u0022...\u0022
+            int csrfIndex = html.indexOf("name=\\u0022csrf\\u0022");
+            if (csrfIndex > 0) {
+                int valueStart = html.indexOf("value=\\u0022", csrfIndex);
+                if (valueStart > 0) {
+                    valueStart += "value=\\u0022".length();
+                    int valueEnd = html.indexOf("\\u0022", valueStart);
+                    if (valueEnd > valueStart) {
+                        csrfToken = html.substring(valueStart, valueEnd);
+                        logger.debug("CSRF extraído (Unicode): {}...", csrfToken.substring(0, Math.min(20, csrfToken.length())));
+                    }
+                }
+            }
+            
+            // Si no se encontró, intentar con formato escapado
             if (csrfToken == null || csrfToken.isEmpty()) {
-                logger.warn("No se encontró token CSRF para comentario - ServiceId: {} - Intentando extraer directamente", serviceId);
-                
-                // Intentar extraer directamente del HTML
+                csrfIndex = html.indexOf("name=\\\"csrf\\\"");
+                if (csrfIndex > 0) {
+                    int valueStart = html.indexOf("value=\\\"", csrfIndex);
+                    if (valueStart > 0) {
+                        valueStart += "value=\\\"".length();
+                        int valueEnd = html.indexOf("\\\"", valueStart);
+                        if (valueEnd > valueStart) {
+                            csrfToken = html.substring(valueStart, valueEnd);
+                            logger.debug("CSRF extraído (escapado): {}...", csrfToken.substring(0, Math.min(20, csrfToken.length())));
+                        }
+                    }
+                }
+            }
+            
+            // Si no se encontró, intentar directamente del HTML parseado
+            if (csrfToken == null || csrfToken.isEmpty()) {
                 Element csrfElement = doc.selectFirst("input[name=csrf]");
                 if (csrfElement != null) {
                     csrfToken = csrfElement.val();
@@ -296,8 +326,6 @@ public class WorkOrderService {
                 logger.error("No se pudo obtener token CSRF para comentario - ServiceId: {}", serviceId);
                 return false;
             }
-
-            logger.debug("CSRF Token para comentario: {}...", csrfToken.substring(0, Math.min(20, csrfToken.length())));
 
             // Preparar datos del formulario
             Map<String, String> formData = new HashMap<>();
@@ -324,15 +352,15 @@ public class WorkOrderService {
             // Loggear body completo para debugging
             logger.debug("Respuesta del formulario - Status: {} - Body length: {}", 
                     response.statusCode(), responseBody.length());
-            logger.debug("Body completo: {}", responseBody);
             
             if (success) {
                 // Verificar si la respuesta indica éxito real
                 if (responseBody.contains("alert-danger")) {
                     logger.warn("Respuesta indica posible error - ServiceId: {} - Body completo: {}", 
                             serviceId, responseBody);
+                    return false;
                 }
-                logger.info("Comentario agregado - ServiceId: {} - Status: {}", serviceId, response.statusCode());
+                logger.info("Comentario agregado exitosamente - ServiceId: {} - Status: {}", serviceId, response.statusCode());
             } else {
                 logger.error("Error al agregar comentario - ServiceId: {} - Status: {} - Body completo: {}", 
                         serviceId, response.statusCode(), responseBody);
