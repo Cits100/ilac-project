@@ -23,6 +23,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
   late List<Task> _tasks;
   bool _isRefreshing = false;
   bool _isProcessing = false;
+  bool _showCompleted = false;
 
   @override
   void initState() {
@@ -31,6 +32,9 @@ class _TaskListScreenState extends State<TaskListScreen> {
   }
 
   bool get isNewTask => widget.workOrder.type == 'new';
+  
+  List<Task> get _pendingTasks => _tasks.where((t) => t.status != 'completed').toList();
+  List<Task> get _completedTasks => _tasks.where((t) => t.status == 'completed').toList();
 
   Future<void> _refreshTasks() async {
     setState(() {
@@ -256,13 +260,15 @@ class _TaskListScreenState extends State<TaskListScreen> {
   }
 
   Future<void> _acceptAllTasks() async {
+    final pendingTasks = _pendingTasks;
+    
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: AppTheme.darkGrey,
         title: const Text('Aceptar Todas', style: TextStyle(color: AppTheme.white)),
         content: Text(
-          '¿Está seguro que desea aceptar todas las tareas (${_tasks.length})?',
+          '¿Está seguro que desea aceptar todas las tareas (${pendingTasks.length})?',
           style: const TextStyle(color: AppTheme.lightGrey),
         ),
         actions: [
@@ -291,7 +297,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
       if (result['success'] == true) {
         setState(() {
-          _tasks.clear();
+          _tasks.removeWhere((t) => t.status != 'completed');
         });
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -312,17 +318,16 @@ class _TaskListScreenState extends State<TaskListScreen> {
         }
       }
     } else {
-      // Agregar cada tarea a la cola
-      for (var task in _tasks) {
+      for (var task in pendingTasks) {
         await _connectivityService.addToQueue('accept', task.id);
       }
       setState(() {
-        _tasks.clear();
+        _tasks.removeWhere((t) => t.status != 'completed');
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Sin conexión. ${_tasks.length} acciones guardadas.'),
+            content: Text('Sin conexión. ${pendingTasks.length} acciones guardadas.'),
             backgroundColor: AppTheme.primaryRed,
           ),
         );
@@ -335,6 +340,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
   }
 
   Future<void> _rejectAllTasks() async {
+    final pendingTasks = _pendingTasks;
     final reasonController = TextEditingController();
     
     final confirmed = await showDialog<bool>(
@@ -346,7 +352,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              '¿Está seguro que desea rechazar todas las tareas (${_tasks.length})?',
+              '¿Está seguro que desea rechazar todas las tareas (${pendingTasks.length})?',
               style: const TextStyle(color: AppTheme.lightGrey),
             ),
             const SizedBox(height: 16),
@@ -406,7 +412,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
       if (result['success'] == true) {
         setState(() {
-          _tasks.clear();
+          _tasks.removeWhere((t) => t.status != 'completed');
         });
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -427,13 +433,12 @@ class _TaskListScreenState extends State<TaskListScreen> {
         }
       }
     } else {
-      // Agregar cada tarea a la cola
-      for (var task in _tasks) {
+      for (var task in pendingTasks) {
         await _connectivityService.addToQueue('reject', task.id, reason: reason);
       }
-      final count = _tasks.length;
+      final count = pendingTasks.length;
       setState(() {
-        _tasks.clear();
+        _tasks.removeWhere((t) => t.status != 'completed');
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -452,11 +457,14 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final pendingTasks = _pendingTasks;
+    final completedTasks = _completedTasks;
+
     return Scaffold(
       appBar: AppBar(
         title: Text('${widget.workOrder.tag} - Tareas'),
         actions: [
-          if (isNewTask && _tasks.isNotEmpty) ...[
+          if (isNewTask && pendingTasks.isNotEmpty) ...[
             IconButton(
               icon: const Icon(Icons.check_circle, color: Colors.green),
               onPressed: _isProcessing ? null : _acceptAllTasks,
@@ -501,21 +509,59 @@ class _TaskListScreenState extends State<TaskListScreen> {
                   ),
                 ],
               )
-            : ListView.builder(
+            : ListView(
                 padding: const EdgeInsets.all(16),
-                itemCount: _tasks.length,
-                itemBuilder: (context, index) {
-                  final task = _tasks[index];
-                  return _buildTaskCard(context, task);
-                },
+                children: [
+                  // Pending tasks
+                  ...pendingTasks.map((task) => _buildTaskCard(context, task, false)),
+                  
+                  // Completed tasks section (collapsible)
+                  if (completedTasks.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    InkWell(
+                      onTap: () {
+                        setState(() {
+                          _showCompleted = !_showCompleted;
+                        });
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        decoration: BoxDecoration(
+                          color: AppTheme.darkGrey,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              _showCompleted ? Icons.expand_less : Icons.expand_more,
+                              color: AppTheme.lightGrey,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Tareas Completadas (${completedTasks.length})',
+                              style: const TextStyle(
+                                color: AppTheme.lightGrey,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    if (_showCompleted) ...[
+                      const SizedBox(height: 8),
+                      ...completedTasks.map((task) => _buildTaskCard(context, task, true)),
+                    ],
+                  ],
+                ],
               ),
       ),
     );
   }
 
-  Widget _buildTaskCard(BuildContext context, Task task) {
-    final isCompleted = task.status == 'completed';
-    
+  Widget _buildTaskCard(BuildContext context, Task task, bool isCompleted) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: InkWell(
@@ -672,7 +718,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                 ),
               ],
 
-              // Accept/Reject buttons for new tasks
+              // Accept/Reject buttons for new tasks (only pending)
               if (isNewTask && !isCompleted) ...[
                 const SizedBox(height: 12),
                 const Divider(color: AppTheme.darkGrey),
