@@ -20,6 +20,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
   final AuthService _authService = AuthService();
   late List<Task> _tasks;
   bool _isRefreshing = false;
+  bool _isProcessing = false;
 
   @override
   void initState() {
@@ -27,32 +28,52 @@ class _TaskListScreenState extends State<TaskListScreen> {
     _tasks = List.from(widget.workOrder.tasks);
   }
 
+  bool get isNewTask => widget.workOrder.type == 'new';
+
   Future<void> _refreshTasks() async {
     setState(() {
       _isRefreshing = true;
     });
 
     try {
-      // Refresh from local database
-      final orders = widget.workOrder.type == 'team'
-          ? await _authService.getTeamWorkOrders()
-          : widget.workOrder.type == 'new'
-              ? await _authService.getNewWorkOrders()
-              : await _authService.getPersonalWorkOrders();
+      final result = await _authService.refreshData();
+      
+      if (result['success'] == true) {
+        final orders = widget.workOrder.type == 'team'
+            ? await _authService.getTeamWorkOrders()
+            : widget.workOrder.type == 'new'
+                ? await _authService.getNewWorkOrders()
+                : await _authService.getPersonalWorkOrders();
 
-      // Find current work order and update tasks
-      for (var order in orders) {
-        if (order.id == widget.workOrder.id) {
-          if (mounted) {
-            setState(() {
-              _tasks = order.tasks;
-            });
+        for (var order in orders) {
+          if (order.id == widget.workOrder.id) {
+            if (mounted) {
+              setState(() {
+                _tasks = order.tasks;
+              });
+            }
+            break;
           }
-          break;
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result['message'] ?? 'Error al actualizar'),
+              backgroundColor: AppTheme.darkRed,
+            ),
+          );
         }
       }
     } catch (e) {
-      // Silent fail
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Error al actualizar datos'),
+            backgroundColor: AppTheme.darkRed,
+          ),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -62,11 +83,299 @@ class _TaskListScreenState extends State<TaskListScreen> {
     }
   }
 
+  Future<void> _acceptTask(Task task) async {
+    setState(() {
+      _isProcessing = true;
+    });
+
+    final result = await _authService.acceptTask(task.id);
+
+    if (result['success'] == true) {
+      setState(() {
+        _tasks.removeWhere((t) => t.id == task.id);
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Tarea aceptada'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result['message'] ?? 'Error al aceptar tarea'),
+            backgroundColor: AppTheme.darkRed,
+          ),
+        );
+      }
+    }
+
+    setState(() {
+      _isProcessing = false;
+    });
+  }
+
+  Future<void> _rejectTask(Task task) async {
+    final reasonController = TextEditingController();
+    
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.darkGrey,
+        title: const Text('Rechazar Tarea', style: TextStyle(color: AppTheme.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Ingrese el motivo del rechazo:',
+              style: TextStyle(color: AppTheme.lightGrey),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: reasonController,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                hintText: 'Motivo del rechazo...',
+                hintStyle: TextStyle(color: AppTheme.grey),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () {
+              if (reasonController.text.trim().isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('El motivo es obligatorio'),
+                    backgroundColor: AppTheme.darkRed,
+                  ),
+                );
+                return;
+              }
+              Navigator.pop(context, true);
+            },
+            child: const Text('Rechazar', style: TextStyle(color: AppTheme.lightRed)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    setState(() {
+      _isProcessing = true;
+    });
+
+    final result = await _authService.rejectTask(task.id, reasonController.text.trim());
+
+    if (result['success'] == true) {
+      setState(() {
+        _tasks.removeWhere((t) => t.id == task.id);
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Tarea rechazada'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result['message'] ?? 'Error al rechazar tarea'),
+            backgroundColor: AppTheme.darkRed,
+          ),
+        );
+      }
+    }
+
+    setState(() {
+      _isProcessing = false;
+    });
+  }
+
+  Future<void> _acceptAllTasks() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.darkGrey,
+        title: const Text('Aceptar Todas', style: TextStyle(color: AppTheme.white)),
+        content: Text(
+          '¿Está seguro que desea aceptar todas las tareas (${_tasks.length})?',
+          style: const TextStyle(color: AppTheme.lightGrey),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Aceptar Todas', style: TextStyle(color: Colors.green)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    setState(() {
+      _isProcessing = true;
+    });
+
+    final result = await _authService.acceptAllTasks(widget.workOrder.id);
+
+    if (result['success'] == true) {
+      setState(() {
+        _tasks.clear();
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${result['tasksProcessed']} tareas aceptadas'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result['message'] ?? 'Error al aceptar tareas'),
+            backgroundColor: AppTheme.darkRed,
+          ),
+        );
+      }
+    }
+
+    setState(() {
+      _isProcessing = false;
+    });
+  }
+
+  Future<void> _rejectAllTasks() async {
+    final reasonController = TextEditingController();
+    
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.darkGrey,
+        title: const Text('Rechazar Todas', style: TextStyle(color: AppTheme.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '¿Está seguro que desea rechazar todas las tareas (${_tasks.length})?',
+              style: const TextStyle(color: AppTheme.lightGrey),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Ingrese el motivo del rechazo:',
+              style: TextStyle(color: AppTheme.lightGrey),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: reasonController,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                hintText: 'Motivo del rechazo...',
+                hintStyle: TextStyle(color: AppTheme.grey),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () {
+              if (reasonController.text.trim().isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('El motivo es obligatorio'),
+                    backgroundColor: AppTheme.darkRed,
+                  ),
+                );
+                return;
+              }
+              Navigator.pop(context, true);
+            },
+            child: const Text('Rechazar Todas', style: TextStyle(color: AppTheme.lightRed)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    setState(() {
+      _isProcessing = true;
+    });
+
+    final result = await _authService.rejectAllTasks(
+      widget.workOrder.id,
+      reasonController.text.trim(),
+    );
+
+    if (result['success'] == true) {
+      setState(() {
+        _tasks.clear();
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${result['tasksProcessed']} tareas rechazadas'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result['message'] ?? 'Error al rechazar tareas'),
+            backgroundColor: AppTheme.darkRed,
+          ),
+        );
+      }
+    }
+
+    setState(() {
+      _isProcessing = false;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text('${widget.workOrder.tag} - Tareas'),
+        actions: [
+          if (isNewTask && _tasks.isNotEmpty) ...[
+            IconButton(
+              icon: const Icon(Icons.check_circle, color: Colors.green),
+              onPressed: _isProcessing ? null : _acceptAllTasks,
+              tooltip: 'Aceptar todas',
+            ),
+            IconButton(
+              icon: const Icon(Icons.cancel, color: AppTheme.lightRed),
+              onPressed: _isProcessing ? null : _rejectAllTasks,
+              tooltip: 'Rechazar todas',
+            ),
+          ],
+        ],
       ),
       body: RefreshIndicator(
         onRefresh: _refreshTasks,
@@ -113,7 +422,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   Widget _buildTaskCard(BuildContext context, Task task) {
     final isCompleted = task.status == 'completed';
-    final isNewTask = widget.workOrder.type == 'new';
     
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -128,7 +436,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
               ),
             ),
           );
-          // Refresh tasks when coming back
           if (result == true && mounted) {
             _refreshTasks();
           }
@@ -142,7 +449,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
               // Header with status
               Row(
                 children: [
-                  // Order number or status
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
@@ -164,7 +470,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
                   ),
                   const SizedBox(width: 8),
                   
-                  // Dispatch type
                   if (task.dispatchType.isNotEmpty)
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -182,7 +487,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
                     ),
                   const Spacer(),
                   
-                  // Due date
                   if (task.dueDate.isNotEmpty)
                     Text(
                       task.dueDate,
@@ -206,7 +510,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
                 ),
               ),
               
-              // Description
               if (task.description.isNotEmpty) ...[
                 const SizedBox(height: 4),
                 Text(
@@ -256,7 +559,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
                 ],
               ),
               
-              // Product
               if (task.product.isNotEmpty) ...[
                 const SizedBox(height: 4),
                 Row(
@@ -285,41 +587,13 @@ class _TaskListScreenState extends State<TaskListScreen> {
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
                     TextButton.icon(
-                      onPressed: () async {
-                        // Navigate to detail for accept
-                        final result = await Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => TaskDetailScreen(
-                              task: task,
-                              taskType: widget.workOrder.type,
-                            ),
-                          ),
-                        );
-                        if (result == true && mounted) {
-                          _refreshTasks();
-                        }
-                      },
+                      onPressed: _isProcessing ? null : () => _acceptTask(task),
                       icon: const Icon(Icons.check, size: 16, color: Colors.green),
                       label: const Text('Aceptar', style: TextStyle(color: Colors.green)),
                     ),
                     const SizedBox(width: 8),
                     TextButton.icon(
-                      onPressed: () async {
-                        // Navigate to detail for reject
-                        final result = await Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => TaskDetailScreen(
-                              task: task,
-                              taskType: widget.workOrder.type,
-                            ),
-                          ),
-                        );
-                        if (result == true && mounted) {
-                          _refreshTasks();
-                        }
-                      },
+                      onPressed: _isProcessing ? null : () => _rejectTask(task),
                       icon: const Icon(Icons.close, size: 16, color: AppTheme.lightRed),
                       label: const Text('Rechazar', style: TextStyle(color: AppTheme.lightRed)),
                     ),

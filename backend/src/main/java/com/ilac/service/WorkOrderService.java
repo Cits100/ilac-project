@@ -489,6 +489,32 @@ public class WorkOrderService {
     }
 
     /**
+     * Aceptar todas las tareas de una orden de trabajo
+     */
+    public int acceptAllTasks(String workOrderId, String identity) {
+        logger.info("Aceptando todas las tareas - Orden: {} - Usuario: {}", workOrderId, identity);
+        
+        Map<String, List<WorkOrder>> allOrders = getAllWorkOrders(identity);
+        int processed = 0;
+        
+        // Buscar en todas las categorías
+        for (String key : new String[]{"newWorkOrders", "teamWorkOrders", "myWorkOrders"}) {
+            for (WorkOrder wo : allOrders.getOrDefault(key, Collections.emptyList())) {
+                if (wo.getId().equals(workOrderId)) {
+                    for (Task task : wo.getTasks()) {
+                        if (acceptTask(task.getId(), identity)) {
+                            processed++;
+                        }
+                    }
+                }
+            }
+        }
+        
+        logger.info("Tareas aceptadas: {} de la orden: {}", processed, workOrderId);
+        return processed;
+    }
+
+    /**
      * Rechazar tarea con razón
      */
     public boolean rejectTask(String taskId, String reason, String identity) {
@@ -528,6 +554,32 @@ public class WorkOrderService {
             logger.error("Excepción al rechazar tarea: {} - Error: {}", taskId, e.getMessage(), e);
             return false;
         }
+    }
+
+    /**
+     * Rechazar todas las tareas de una orden de trabajo con razón
+     */
+    public int rejectAllTasks(String workOrderId, String reason, String identity) {
+        logger.info("Rechazando todas las tareas - Orden: {} - Usuario: {} - Razón: {}", workOrderId, identity, reason);
+        
+        Map<String, List<WorkOrder>> allOrders = getAllWorkOrders(identity);
+        int processed = 0;
+        
+        // Buscar en todas las categorías
+        for (String key : new String[]{"newWorkOrders", "teamWorkOrders", "myWorkOrders"}) {
+            for (WorkOrder wo : allOrders.getOrDefault(key, Collections.emptyList())) {
+                if (wo.getId().equals(workOrderId)) {
+                    for (Task task : wo.getTasks()) {
+                        if (rejectTask(task.getId(), reason, identity)) {
+                            processed++;
+                        }
+                    }
+                }
+            }
+        }
+        
+        logger.info("Tareas rechazadas: {} de la orden: {}", processed, workOrderId);
+        return processed;
     }
 
     // ==================== MÉTODOS PRIVADOS ====================

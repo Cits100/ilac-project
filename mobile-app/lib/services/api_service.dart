@@ -228,6 +228,43 @@ class ApiService {
     }
   }
 
+  Future<Map<String, dynamic>> acceptAllTasks(String token, String workOrderId) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/accept-all-tasks'),
+        headers: _authHeaders(token),
+        body: jsonEncode({'taskId': workOrderId}),
+      );
+
+      return _parseResponse(response);
+    } catch (e) {
+      return {
+        'success': false,
+        'message': 'Error de conexión: $e',
+      };
+    }
+  }
+
+  Future<Map<String, dynamic>> rejectAllTasks(String token, String workOrderId, String reason) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/reject-all-tasks'),
+        headers: _authHeaders(token),
+        body: jsonEncode({
+          'taskId': workOrderId,
+          'reason': reason,
+        }),
+      );
+
+      return _parseResponse(response);
+    } catch (e) {
+      return {
+        'success': false,
+        'message': 'Error de conexión: $e',
+      };
+    }
+  }
+
   // ==================== PARSERS ====================
 
   Map<String, dynamic> _parseDashboardResponse(http.Response response) {

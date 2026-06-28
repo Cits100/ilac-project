@@ -377,7 +377,7 @@ public class IlacController {
      */
     @PostMapping("/accept-task")
     public ResponseEntity<Map<String, Object>> acceptTask(@RequestBody TokenRequest request,
-                                                           HttpServletRequest httpRequest) {
+                                                            HttpServletRequest httpRequest) {
         SessionService.UserSession session = getSessionFromRequest(httpRequest);
         logger.info("POST /api/accept-task - Usuario: {} - Tarea: {}", session.getIdentity(), request.getTaskId());
 
@@ -389,6 +389,69 @@ public class IlacController {
         } else {
             logger.error("Error al aceptar tarea: {} - Tarea: {}", session.getIdentity(), request.getTaskId());
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", "Error al aceptar tarea"));
+        }
+    }
+
+    /**
+     * Aceptar todas las tareas de una orden de trabajo
+     * POST /api/accept-all-tasks
+     * Header: Authorization: Bearer <token>
+     * Body: { "taskId": "4510709" } (work order ID)
+     */
+    @PostMapping("/accept-all-tasks")
+    public ResponseEntity<Map<String, Object>> acceptAllTasks(@RequestBody TokenRequest request,
+                                                               HttpServletRequest httpRequest) {
+        SessionService.UserSession session = getSessionFromRequest(httpRequest);
+        logger.info("POST /api/accept-all-tasks - Usuario: {} - Orden: {}", session.getIdentity(), request.getTaskId());
+
+        try {
+            int result = workOrderService.acceptAllTasks(request.getTaskId(), session.getIdentity());
+            logger.info("Todas las tareas aceptadas: {} - Orden: {} - Tareas: {}", 
+                    session.getIdentity(), request.getTaskId(), result);
+            return ResponseEntity.ok(Map.of(
+                    "success", true, 
+                    "message", "Todas las tareas fueron aceptadas",
+                    "tasksProcessed", result
+            ));
+        } catch (Exception e) {
+            logger.error("Error al aceptar todas las tareas: {} - Orden: {} - Error: {}", 
+                    session.getIdentity(), request.getTaskId(), e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false, 
+                    "message", "Error al aceptar todas las tareas: " + e.getMessage()
+            ));
+        }
+    }
+
+    /**
+     * Rechazar todas las tareas de una orden de trabajo
+     * POST /api/reject-all-tasks
+     * Header: Authorization: Bearer <token>
+     * Body: { "taskId": "4510709", "reason": "motivo" }
+     */
+    @PostMapping("/reject-all-tasks")
+    public ResponseEntity<Map<String, Object>> rejectAllTasks(@RequestBody TokenRequest request,
+                                                               HttpServletRequest httpRequest) {
+        SessionService.UserSession session = getSessionFromRequest(httpRequest);
+        logger.info("POST /api/reject-all-tasks - Usuario: {} - Orden: {} - Razón: {}", 
+                session.getIdentity(), request.getTaskId(), request.getReason());
+
+        try {
+            int result = workOrderService.rejectAllTasks(request.getTaskId(), request.getReason(), session.getIdentity());
+            logger.info("Todas las tareas rechazadas: {} - Orden: {} - Tareas: {}", 
+                    session.getIdentity(), request.getTaskId(), result);
+            return ResponseEntity.ok(Map.of(
+                    "success", true, 
+                    "message", "Todas las tareas fueron rechazadas",
+                    "tasksProcessed", result
+            ));
+        } catch (Exception e) {
+            logger.error("Error al rechazar todas las tareas: {} - Orden: {} - Error: {}", 
+                    session.getIdentity(), request.getTaskId(), e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false, 
+                    "message", "Error al rechazar todas las tareas: " + e.getMessage()
+            ));
         }
     }
 

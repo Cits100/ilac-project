@@ -338,15 +338,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               ],
                             ),
                           ),
-                          if (_isRefreshing)
-                            const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: AppTheme.primaryRed,
-                              ),
-                            ),
+                          const SizedBox(width: 8),
                         ],
                       ),
                     ),

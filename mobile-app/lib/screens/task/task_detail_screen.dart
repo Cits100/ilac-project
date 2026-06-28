@@ -143,10 +143,10 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   }
 
   Future<void> _submitComment() async {
-    if (_commentController.text.trim().isEmpty && _selectedImage == null) {
+    if (_commentController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Ingrese un comentario o seleccione una imagen'),
+          content: Text('El comentario es obligatorio'),
           backgroundColor: AppTheme.darkRed,
         ),
       );
@@ -631,22 +631,23 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               ),
             ],
 
-            // Comments list section - always show
-            const SizedBox(height: 16),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.comment, color: AppTheme.primaryRed, size: 20),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Comentarios (${_comments.length})',
-                          style: const TextStyle(
-                            color: AppTheme.white,
+            // Comments list section - only show for non-new tasks
+            if (!isNewTask) ...[
+              const SizedBox(height: 16),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.comment, color: AppTheme.primaryRed, size: 20),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Comentarios (${_comments.length})',
+                            style: const TextStyle(
+                              color: AppTheme.white,
                             fontWeight: FontWeight.bold,
                             fontSize: 16,
                           ),
@@ -684,10 +685,11 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                       )
                     else
                       ..._comments.map((comment) => _buildCommentCard(comment)),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
+            ],
 
             // Comment section (not for new tasks)
             if (!isNewTask) ...[

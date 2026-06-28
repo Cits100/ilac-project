@@ -289,4 +289,36 @@ class AuthService {
     
     return result;
   }
+
+  /// Aceptar todas las tareas de una orden
+  Future<Map<String, dynamic>> acceptAllTasks(String workOrderId) async {
+    if (_sessionToken == null) {
+      return {'success': false, 'message': 'No hay sesión activa', 'errorType': 'session_expired'};
+    }
+
+    final result = await _apiService.acceptAllTasks(_sessionToken!, workOrderId);
+    
+    if (result['errorType'] == 'session_expired') {
+      _sessionToken = null;
+      await _secureStorage.delete(key: 'session_token');
+    }
+    
+    return result;
+  }
+
+  /// Rechazar todas las tareas de una orden
+  Future<Map<String, dynamic>> rejectAllTasks(String workOrderId, String reason) async {
+    if (_sessionToken == null) {
+      return {'success': false, 'message': 'No hay sesión activa', 'errorType': 'session_expired'};
+    }
+
+    final result = await _apiService.rejectAllTasks(_sessionToken!, workOrderId, reason);
+    
+    if (result['errorType'] == 'session_expired') {
+      _sessionToken = null;
+      await _secureStorage.delete(key: 'session_token');
+    }
+    
+    return result;
+  }
 }
