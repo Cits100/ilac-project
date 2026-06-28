@@ -5,7 +5,6 @@ import '../../services/connectivity_service.dart';
 import '../../models/work_order.dart';
 import '../login/login_screen.dart';
 import '../work_order/work_order_list_screen.dart';
-import '../settings/settings_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -275,19 +274,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               },
               tooltip: 'Acciones pendientes',
             ),
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () async {
-              final result = await Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SettingsScreen()),
-              );
-              if (result == true) {
-                _loadData();
-              }
-            },
-            tooltip: 'Configuración',
-          ),
           IconButton(
             icon: const Icon(Icons.logout),
             onPressed: _logout,

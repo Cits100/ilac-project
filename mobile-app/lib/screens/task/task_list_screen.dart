@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../utils/app_theme.dart';
 import '../../models/work_order.dart';
 import '../../services/auth_service.dart';
+import '../../services/connectivity_service.dart';
 import '../task/task_detail_screen.dart';
 
 class TaskListScreen extends StatefulWidget {
@@ -18,6 +19,7 @@ class TaskListScreen extends StatefulWidget {
 
 class _TaskListScreenState extends State<TaskListScreen> {
   final AuthService _authService = AuthService();
+  final ConnectivityService _connectivityService = ConnectivityService();
   late List<Task> _tasks;
   bool _isRefreshing = false;
   bool _isProcessing = false;
@@ -36,6 +38,20 @@ class _TaskListScreenState extends State<TaskListScreen> {
     });
 
     try {
+      final isConnected = await _connectivityService.isConnected();
+      
+      if (!isConnected) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Sin conexión'),
+              backgroundColor: AppTheme.darkRed,
+            ),
+          );
+        }
+        return;
+      }
+
       final result = await _authService.refreshData();
       
       if (result['success'] == true) {
@@ -69,7 +85,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Error al actualizar datos'),
+            content: Text('Error al actualizar'),
             backgroundColor: AppTheme.darkRed,
           ),
         );
@@ -88,26 +104,43 @@ class _TaskListScreenState extends State<TaskListScreen> {
       _isProcessing = true;
     });
 
-    final result = await _authService.acceptTask(task.id);
+    final isConnected = await _connectivityService.isConnected();
 
-    if (result['success'] == true) {
+    if (isConnected) {
+      final result = await _authService.acceptTask(task.id);
+
+      if (result['success'] == true) {
+        setState(() {
+          _tasks.removeWhere((t) => t.id == task.id);
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Tarea aceptada'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result['message'] ?? 'Error al aceptar'),
+              backgroundColor: AppTheme.darkRed,
+            ),
+          );
+        }
+      }
+    } else {
+      await _connectivityService.addToQueue('accept', task.id);
       setState(() {
         _tasks.removeWhere((t) => t.id == task.id);
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Tarea aceptada'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(result['message'] ?? 'Error al aceptar tarea'),
-            backgroundColor: AppTheme.darkRed,
+            content: Text('Sin conexión. Guardado.'),
+            backgroundColor: AppTheme.primaryRed,
           ),
         );
       }
@@ -174,26 +207,44 @@ class _TaskListScreenState extends State<TaskListScreen> {
       _isProcessing = true;
     });
 
-    final result = await _authService.rejectTask(task.id, reasonController.text.trim());
+    final reason = reasonController.text.trim();
+    final isConnected = await _connectivityService.isConnected();
 
-    if (result['success'] == true) {
+    if (isConnected) {
+      final result = await _authService.rejectTask(task.id, reason);
+
+      if (result['success'] == true) {
+        setState(() {
+          _tasks.removeWhere((t) => t.id == task.id);
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Tarea rechazada'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result['message'] ?? 'Error al rechazar'),
+              backgroundColor: AppTheme.darkRed,
+            ),
+          );
+        }
+      }
+    } else {
+      await _connectivityService.addToQueue('reject', task.id, reason: reason);
       setState(() {
         _tasks.removeWhere((t) => t.id == task.id);
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Tarea rechazada'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(result['message'] ?? 'Error al rechazar tarea'),
-            backgroundColor: AppTheme.darkRed,
+            content: Text('Sin conexión. Guardado.'),
+            backgroundColor: AppTheme.primaryRed,
           ),
         );
       }
@@ -233,26 +284,46 @@ class _TaskListScreenState extends State<TaskListScreen> {
       _isProcessing = true;
     });
 
-    final result = await _authService.acceptAllTasks(widget.workOrder.id);
+    final isConnected = await _connectivityService.isConnected();
 
-    if (result['success'] == true) {
+    if (isConnected) {
+      final result = await _authService.acceptAllTasks(widget.workOrder.id);
+
+      if (result['success'] == true) {
+        setState(() {
+          _tasks.clear();
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${result['tasksProcessed']} tareas aceptadas'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result['message'] ?? 'Error al aceptar tareas'),
+              backgroundColor: AppTheme.darkRed,
+            ),
+          );
+        }
+      }
+    } else {
+      // Agregar cada tarea a la cola
+      for (var task in _tasks) {
+        await _connectivityService.addToQueue('accept', task.id);
+      }
       setState(() {
         _tasks.clear();
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('${result['tasksProcessed']} tareas aceptadas'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(result['message'] ?? 'Error al aceptar tareas'),
-            backgroundColor: AppTheme.darkRed,
+            content: Text('Sin conexión. ${_tasks.length} acciones guardadas.'),
+            backgroundColor: AppTheme.primaryRed,
           ),
         );
       }
@@ -324,29 +395,51 @@ class _TaskListScreenState extends State<TaskListScreen> {
       _isProcessing = true;
     });
 
-    final result = await _authService.rejectAllTasks(
-      widget.workOrder.id,
-      reasonController.text.trim(),
-    );
+    final reason = reasonController.text.trim();
+    final isConnected = await _connectivityService.isConnected();
 
-    if (result['success'] == true) {
+    if (isConnected) {
+      final result = await _authService.rejectAllTasks(
+        widget.workOrder.id,
+        reason,
+      );
+
+      if (result['success'] == true) {
+        setState(() {
+          _tasks.clear();
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${result['tasksProcessed']} tareas rechazadas'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result['message'] ?? 'Error al rechazar tareas'),
+              backgroundColor: AppTheme.darkRed,
+            ),
+          );
+        }
+      }
+    } else {
+      // Agregar cada tarea a la cola
+      for (var task in _tasks) {
+        await _connectivityService.addToQueue('reject', task.id, reason: reason);
+      }
+      final count = _tasks.length;
       setState(() {
         _tasks.clear();
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('${result['tasksProcessed']} tareas rechazadas'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(result['message'] ?? 'Error al rechazar tareas'),
-            backgroundColor: AppTheme.darkRed,
+            content: Text('Sin conexión. $count acciones guardadas.'),
+            backgroundColor: AppTheme.primaryRed,
           ),
         );
       }

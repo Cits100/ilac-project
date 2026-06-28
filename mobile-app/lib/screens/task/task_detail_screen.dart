@@ -201,7 +201,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Comentario guardado para enviar cuando haya conexión'),
+              content: Text('Sin conexión. Guardado.'),
               backgroundColor: AppTheme.primaryRed,
             ),
           );
@@ -218,7 +218,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Comentario guardado para enviar cuando haya conexión'),
+            content: Text('Sin conexión. Guardado.'),
             backgroundColor: AppTheme.primaryRed,
           ),
         );
@@ -282,7 +282,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Acción guardada para enviar cuando haya conexión'),
+              content: Text('Sin conexión. Guardado.'),
               backgroundColor: AppTheme.primaryRed,
             ),
           );
@@ -293,7 +293,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Acción guardada para enviar cuando haya conexión'),
+            content: Text('Sin conexión. Guardado.'),
             backgroundColor: AppTheme.primaryRed,
           ),
         );
@@ -389,7 +389,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Acción guardada para enviar cuando haya conexión'),
+              content: Text('Sin conexión. Guardado.'),
               backgroundColor: AppTheme.primaryRed,
             ),
           );
@@ -404,7 +404,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Acción guardada para enviar cuando haya conexión'),
+            content: Text('Sin conexión. Guardado.'),
             backgroundColor: AppTheme.primaryRed,
           ),
         );
@@ -441,7 +441,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Acción guardada para enviar cuando haya conexión'),
+              content: Text('Sin conexión. Guardado.'),
               backgroundColor: AppTheme.primaryRed,
             ),
           );
@@ -452,7 +452,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Acción guardada para enviar cuando haya conexión'),
+            content: Text('Sin conexión. Guardado.'),
             backgroundColor: AppTheme.primaryRed,
           ),
         );
@@ -556,6 +556,68 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     ),
                   ),
                 ],
+              ),
+              const SizedBox(height: 16),
+            ],
+
+            // Marcar como Realizada / Rechazar for personal tasks
+            if (!isNewTask && !isCompleted) ...[
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _isCompleting ? null : _completeTask,
+                  icon: _isCompleting
+                      ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppTheme.white,
+                          ),
+                        )
+                      : const Icon(Icons.check_circle, size: 28),
+                  label: Text(
+                    _isCompleting ? 'Marcando...' : 'Marcar como Realizada',
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green.shade700,
+                    padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 24),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    elevation: 4,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _isRejecting ? null : _rejectTask,
+                  icon: _isRejecting
+                      ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppTheme.white,
+                          ),
+                        )
+                      : const Icon(Icons.cancel, size: 28),
+                  label: Text(
+                    _isRejecting ? 'Rechazando...' : 'Rechazar',
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primaryRed,
+                    padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 24),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    elevation: 4,
+                  ),
+                ),
               ),
               const SizedBox(height: 16),
             ],
