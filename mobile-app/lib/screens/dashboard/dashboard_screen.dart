@@ -47,6 +47,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
         );
       }
     };
+
+    // Configurar callback para sesión expirada
+    _connectivityService.onSessionExpired = () {
+      if (mounted) {
+        _showSessionExpiredDialog();
+      }
+    };
   }
 
   Future<void> _loadData() async {
@@ -148,6 +155,41 @@ class _DashboardScreenState extends State<DashboardScreen> {
               }
             },
             child: const Text('Cerrar Sesión', style: TextStyle(color: AppTheme.lightRed)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSessionExpiredDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.darkGrey,
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber, color: Colors.orange),
+            SizedBox(width: 8),
+            Text('Sesión Expirada', style: TextStyle(color: AppTheme.white)),
+          ],
+        ),
+        content: const Text(
+          'Su sesión ha expirado. Las acciones pendientes se sincronizarán cuando inicie sesión nuevamente.',
+          style: TextStyle(color: AppTheme.lightGrey),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await _authService.logout();
+              if (mounted) {
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(builder: (_) => const LoginScreen()),
+                );
+              }
+            },
+            child: const Text('Iniciar Sesión'),
           ),
         ],
       ),

@@ -890,6 +890,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     final isOwnComment = comment.author.isNotEmpty && 
         (comment.author.toLowerCase().contains(currentUser.split('@').first.toLowerCase()) ||
          currentUser.toLowerCase().contains(comment.author.toLowerCase()));
+    final isPending = comment.isPendingSync;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -897,11 +898,36 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       decoration: BoxDecoration(
         color: AppTheme.darkGrey.withOpacity(0.5),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppTheme.grey.withOpacity(0.3)),
+        border: Border.all(
+          color: isPending ? Colors.orange : AppTheme.grey.withOpacity(0.3),
+          width: isPending ? 2 : 1,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Pending indicator
+          if (isPending)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              margin: const EdgeInsets.only(bottom: 8),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.sync_disabled, size: 14, color: Colors.orange),
+                  SizedBox(width: 4),
+                  Text(
+                    'Pendiente de sincronizar',
+                    style: TextStyle(color: Colors.orange, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+          
           // Header with author, date and edit button
           Row(
             children: [
@@ -925,7 +951,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     fontSize: 11,
                   ),
                 ),
-              if (isOwnComment && comment.id.isNotEmpty)
+              if (isOwnComment && comment.id.isNotEmpty && !isPending)
                 IconButton(
                   icon: const Icon(Icons.edit, size: 18, color: AppTheme.primaryRed),
                   onPressed: () => _editComment(comment),
@@ -939,9 +965,10 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           if (comment.text.isNotEmpty)
             Text(
               comment.text,
-              style: const TextStyle(
-                color: AppTheme.lightGrey,
+              style: TextStyle(
+                color: isPending ? AppTheme.grey : AppTheme.lightGrey,
                 fontSize: 14,
+                fontStyle: isPending ? FontStyle.italic : null,
               ),
             ),
           

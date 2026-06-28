@@ -1,10 +1,41 @@
 import 'package:flutter/material.dart';
+import 'package:workmanager/workmanager.dart';
 import 'utils/app_theme.dart';
 import 'services/auth_service.dart';
 import 'services/api_service.dart';
 import 'services/connectivity_service.dart';
+import 'services/notification_service.dart';
 import 'screens/login/login_screen.dart';
 import 'screens/dashboard/dashboard_screen.dart';
+
+// Callback para tareas en background
+@pragma('vm:entry-point')
+void callbackDispatcher() {
+  Workmanager().executeTask((task, inputData) async {
+    try {
+      // Inicializar servicios necesarios
+      final apiService = ApiService();
+      await apiService.loadBaseUrl();
+      
+      final connectivityService = ConnectivityService();
+      connectivityService.initialize();
+      
+      final notificationService = NotificationService();
+      await notificationService.initialize();
+      
+      // Procesar cola
+      final syncedCount = await connectivityService.processQueueInBackground();
+      
+      if (syncedCount > 0) {
+        await notificationService.showSyncComplete(syncedCount);
+      }
+      
+      return Future.value(true);
+    } catch (e) {
+      return Future.value(false);
+    }
+  });
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -12,6 +43,26 @@ void main() async {
   // Cargar URL guardada
   final apiService = ApiService();
   await apiService.loadBaseUrl();
+  
+  // Inicializar notificaciones
+  final notificationService = NotificationService();
+  await notificationService.initialize();
+  
+  // Inicializar WorkManager
+  await Workmanager().initialize(
+    callbackDispatcher,
+    isInDebugMode: false,
+  );
+  
+  // Registrar tarea periódica (cada 15 minutos)
+  await Workmanager().registerPeriodicTask(
+    "sync-offline-queue",
+    "syncOfflineQueue",
+    frequency: const Duration(minutes: 15),
+    constraints: Constraints(
+      networkType: NetworkType.connected,
+    ),
+  );
   
   // Inicializar servicio de conectividad
   final connectivityService = ConnectivityService();

@@ -2,6 +2,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../services/api_service.dart';
 import '../services/database_service.dart';
 import '../services/connectivity_service.dart';
+import '../services/notification_service.dart';
 import '../models/work_order.dart';
 
 class AuthService {
@@ -136,12 +137,18 @@ class AuthService {
   }
 
   /// Procesar cola después del login
-  void _processQueueAfterLogin() {
-    // El ConnectivityService procesará la cola automáticamente
-    // porque tiene acceso a AuthService y usará el token actual
-    Future.delayed(const Duration(seconds: 2), () {
-      ConnectivityService().processQueue();
-    });
+  Future<void> _processQueueAfterLogin() async {
+    // Esperar un momento para que la sesión se establezca
+    await Future.delayed(const Duration(seconds: 2));
+    
+    final connectivityService = ConnectivityService();
+    final syncedCount = await connectivityService.processQueueInBackground();
+    
+    if (syncedCount > 0) {
+      // Mostrar resumen de sincronización
+      final notificationService = NotificationService();
+      await notificationService.showSyncComplete(syncedCount);
+    }
   }
 
   /// Cerrar sesión

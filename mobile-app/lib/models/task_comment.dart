@@ -5,6 +5,7 @@ class TaskComment {
   final String text;
   final String imageUrl;
   final String fileName;
+  final bool isPendingSync;
 
   TaskComment({
     required this.id,
@@ -13,6 +14,7 @@ class TaskComment {
     required this.text,
     required this.imageUrl,
     required this.fileName,
+    this.isPendingSync = false,
   });
 
   factory TaskComment.fromJson(Map<String, dynamic> json) {
@@ -23,6 +25,7 @@ class TaskComment {
       text: json['text'] ?? '',
       imageUrl: json['imageUrl'] ?? '',
       fileName: json['fileName'] ?? '',
+      isPendingSync: json['isPendingSync'] ?? false,
     );
   }
 
@@ -34,6 +37,7 @@ class TaskComment {
       'text': text,
       'imageUrl': imageUrl,
       'fileName': fileName,
+      'isPendingSync': isPendingSync,
     };
   }
 }
